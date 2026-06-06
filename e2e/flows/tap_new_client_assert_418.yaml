@@ -1,0 +1,8 @@
+appId: com.tkhskt.forja.sample
+---
+- tapOn:
+    id: "fetch_new"
+- extendedWaitUntil:
+    visible:
+      text: ".*HTTP 418.*"
+    timeout: 15000

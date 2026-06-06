@@ -1,0 +1,14 @@
+# Tap "A: SINGLETON" and wait for an HTTP response.
+#
+# Why no `launchApp`: maestro's `launchApp` restarts the app process even
+# with `clearState: false`, which kills the JVMTI agent we just attached.
+# The Go test calls `am start` before invoking maestro, so the app is
+# already in the foreground; maestro just needs to interact with it.
+appId: com.tkhskt.forja.sample
+---
+- tapOn:
+    id: "fetch_singleton"
+- extendedWaitUntil:
+    visible:
+      text: ".*HTTP \\d+.*"
+    timeout: 15000

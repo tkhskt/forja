@@ -1,0 +1,9 @@
+{
+  "rewritten": true,
+  "by": "forja-e2e",
+  "scenario": "bodyFile",
+  "fields": {
+    "ok": false,
+    "detail": "This response body lives in fixtures/teapot_response.json"
+  }
+}

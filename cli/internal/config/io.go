@@ -1,0 +1,394 @@
+package config
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Canonical paths under ./forja/, relative to cwd. The directory is the
+// per-project root and forja never modifies these paths automatically — the
+// dir layout is part of the user's repo.
+const (
+	DefaultPath       = "forja/rules.yml"       // project-scope rule definitions (you should commit it)
+	DefaultLocalPath  = "forja/rules.local.yml" // local-scope rule definitions (you should gitignore it)
+	DefaultStatusPath = "forja/status.json"     // per-(package, rule) enabled state (you should gitignore it)
+)
+
+// Load reads a RulesFile from disk. If the file is missing it returns nil
+// without an error, since "no rules yet" is a valid state for `rules add`
+// to create the file from scratch.
+func Load(path string) (*RulesFile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	var rf RulesFile
+	if err := yaml.Unmarshal(data, &rf); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return &rf, nil
+}
+
+// Save writes the RulesFile to disk, creating parent directories as needed.
+// The output is deterministic (2-space indent, sorted-by-document-order).
+func Save(path string, rf *RulesFile) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+	}
+	enc, err := marshalYAML(rf)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, enc, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+func marshalYAML(rf *RulesFile) ([]byte, error) {
+	out, err := yaml.Marshal(rf)
+	if err != nil {
+		return nil, fmt.Errorf("marshal yaml: %w", err)
+	}
+	return out, nil
+}
+
+// PackageStatus is the per-package slice of the workspace status. Enabled is
+// the sparse list of rule names currently active for the package. A rule is
+// "on" for a package iff its name appears in this list (= absent means off).
+type PackageStatus struct {
+	Enabled []string `json:"enabled"`
+}
+
+// Status is the workspace-wide enabled state, keyed by Android package name.
+// Lives in forja/status.json and is considered transient runtime state
+// (intended to be gitignored — forja does not touch your .gitignore for you).
+// The on-disk shape is a flat top-level map of pkg → {enabled},
+// e.g. `{"com.x": {"enabled": ["rule-a", "rule-b"]}, "com.y": {"enabled": []}}`.
+//
+// A pkg key that exists with an empty `enabled` list means "this package has
+// been touched by forja but currently has no rules active" (= the state right
+// after `forja off`). A pkg key that's absent entirely means forja has never
+// interacted with that package.
+type Status map[string]PackageStatus
+
+// IsEnabled reports whether name is in the enabled list for pkg. Default
+// (absent pkg or absent name) is false.
+func (s Status) IsEnabled(pkg, name string) bool {
+	ps, ok := s[pkg]
+	if !ok {
+		return false
+	}
+	for _, n := range ps.Enabled {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Enable adds name to pkg's enabled list. No-op if already present.
+func (s Status) Enable(pkg, name string) {
+	ps := s[pkg]
+	for _, n := range ps.Enabled {
+		if n == name {
+			return
+		}
+	}
+	ps.Enabled = append(ps.Enabled, name)
+	s[pkg] = ps
+}
+
+// Disable removes name from pkg's enabled list. No-op if absent.
+func (s Status) Disable(pkg, name string) {
+	ps, ok := s[pkg]
+	if !ok {
+		return
+	}
+	for i, n := range ps.Enabled {
+		if n == name {
+			ps.Enabled = append(ps.Enabled[:i], ps.Enabled[i+1:]...)
+			s[pkg] = ps
+			return
+		}
+	}
+}
+
+// ClearPkg wipes pkg's enabled list (= all rules off for pkg) while keeping
+// the pkg key. Mirrors what `forja off --pkg X` does to local state.
+func (s Status) ClearPkg(pkg string) {
+	s[pkg] = PackageStatus{Enabled: []string{}}
+}
+
+// PkgsEnabling returns the sorted set of pkgs that currently have name in
+// their enabled list. Used by `rules update / remove` to discover which pkgs
+// should receive the auto-propagated push.
+func (s Status) PkgsEnabling(name string) []string {
+	out := make([]string, 0)
+	for pkg, ps := range s {
+		for _, n := range ps.Enabled {
+			if n == name {
+				out = append(out, pkg)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// DropRule removes name from every pkg's enabled list. Called when a rule
+// is deleted from the catalog so stale status entries don't accumulate.
+func (s Status) DropRule(name string) {
+	for pkg, ps := range s {
+		for i, n := range ps.Enabled {
+			if n == name {
+				ps.Enabled = append(ps.Enabled[:i], ps.Enabled[i+1:]...)
+				s[pkg] = ps
+				break
+			}
+		}
+	}
+}
+
+// EnabledFor returns the enabled-rule list for pkg in a defensive copy. Empty
+// (nil) for unknown pkgs.
+func (s Status) EnabledFor(pkg string) []string {
+	ps, ok := s[pkg]
+	if !ok || len(ps.Enabled) == 0 {
+		return nil
+	}
+	out := make([]string, len(ps.Enabled))
+	copy(out, ps.Enabled)
+	return out
+}
+
+// LoadStatus reads forja/status.json. Missing file returns an empty Status
+// (not nil) so callers can mutate without nil checks.
+func LoadStatus(path string) (Status, error) {
+	s := Status{}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return s, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return s, nil
+}
+
+// SaveStatus writes the status to disk. JSON map key order is sorted by
+// encoding/json so the output is stable.
+func SaveStatus(path string, s Status) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+	}
+	if s == nil {
+		s = Status{}
+	}
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal status: %w", err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+// EffectiveRule is one rule plus context the rule layer needs after merging:
+// the scope it came from (for TUI section header) and the directory of the
+// source yml file (for resolving relative bodyFile paths).
+type EffectiveRule struct {
+	Rule
+	Scope   string // "project" or "local"
+	BaseDir string // directory of the yml file the rule came from (for bodyFile resolution)
+}
+
+// Scope constants for EffectiveRule.Scope.
+const (
+	ScopeProject = "project"
+	ScopeLocal    = "local"
+)
+
+// ResolveBody returns the body content to ship to the device. Either reads
+// the BodyFile from disk (if set) or returns the inline Body (if set). At
+// most one of Body/BodyFile may be set; both being set is an error.
+//
+// BodyFile content interpretation:
+//   - file extension `.json` → parse as a JSON object, return as BodyValue.Object
+//   - any other extension     → raw bytes as BodyValue.String
+//
+// Relative BodyFile paths are resolved against EffectiveRule.BaseDir.
+func (er *EffectiveRule) ResolveBody() (*BodyValue, error) {
+	if er.BodyFile == "" {
+		return er.Body, nil
+	}
+	if er.Body != nil && !er.Body.IsEmpty() {
+		return nil, fmt.Errorf("rule %q: cannot set both body and bodyFile", er.Name)
+	}
+	path := er.BodyFile
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(er.BaseDir, path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("rule %q: read bodyFile %s: %w", er.Name, path, err)
+	}
+	if strings.EqualFold(filepath.Ext(er.BodyFile), ".json") {
+		var m map[string]any
+		if err := json.Unmarshal(data, &m); err != nil {
+			return nil, fmt.Errorf("rule %q: parse %s as JSON object: %w", er.Name, path, err)
+		}
+		return &BodyValue{Object: m}, nil
+	}
+	return &BodyValue{String: string(data)}, nil
+}
+
+// Effective merges project + local rules and applies the per-package status
+// to produce the rule list for a specific package. Local rules win in two
+// ways:
+//
+//  1. Name collision (= same rule name in both scopes): the project entry is
+//     dropped, the local entry survives.
+//  2. Match collision (= different names, but both would match the same
+//     request): the on-device interceptor uses first-match-wins, so the
+//     local rule must appear earlier in the slice. We emit local rules
+//     first then project rules for exactly this reason.
+//
+// projectDir and localDir are the directories of the yml files each scope
+// came from. They're propagated to each EffectiveRule.BaseDir so relative
+// bodyFile paths can be resolved at push time.
+//
+// `pkg` is the target Android package; each returned rule's Enabled field is
+// set based on the per-package enabled list in status (absent = disabled).
+func Effective(project *RulesFile, projectDir string, local *RulesFile, localDir string, status Status, pkg string) []EffectiveRule {
+	localNames := map[string]int{}
+	if local != nil {
+		for i, r := range local.Rules {
+			localNames[r.Name] = i
+		}
+	}
+
+	out := make([]EffectiveRule, 0)
+	if local != nil {
+		for _, r := range local.Rules {
+			rr := r
+			rr.Enabled = status.IsEnabled(pkg, r.Name)
+			out = append(out, EffectiveRule{Rule: rr, Scope: ScopeLocal, BaseDir: localDir})
+		}
+	}
+	if project != nil {
+		for _, r := range project.Rules {
+			if _, shadowed := localNames[r.Name]; shadowed {
+				continue
+			}
+			rr := r
+			rr.Enabled = status.IsEnabled(pkg, r.Name)
+			out = append(out, EffectiveRule{Rule: rr, Scope: ScopeProject, BaseDir: projectDir})
+		}
+	}
+	return out
+}
+
+// EffectiveToDeviceJSON converts the merged effective ruleset to the JSON
+// array format expected by the on-device runtime. Only enabled rules are
+// included; order is preserved (first match wins on-device).
+//
+// For each rule, body content is resolved via EffectiveRule.ResolveBody
+// (reads bodyFile if set, otherwise uses inline body). File-read errors
+// propagate so the user sees a clear "rule X bodyFile not found" rather
+// than a silent missing-body push.
+func EffectiveToDeviceJSON(rules []EffectiveRule) ([]byte, error) {
+	out := make([]map[string]any, 0, len(rules))
+	for _, er := range rules {
+		if !er.Enabled {
+			continue
+		}
+		body, err := er.ResolveBody()
+		if err != nil {
+			return nil, err
+		}
+		m := ruleToDeviceMap(er.Rule)
+		// ruleToDeviceMap used the inline Body field; if ResolveBody read a
+		// file, swap in the resolved value.
+		delete(m, "body")
+		delete(m, "bodyObject")
+		if body != nil && !body.IsEmpty() {
+			if body.Object != nil {
+				m["bodyObject"] = body.Object
+			} else {
+				m["body"] = body.String
+			}
+		}
+		out = append(out, m)
+	}
+	buf, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal json: %w", err)
+	}
+	return append(buf, '\n'), nil
+}
+
+// ToDeviceJSON serializes the enabled-only subset of rules as the JSON array
+// expected by the runtime's FileRulesProvider. Order is preserved (first match
+// wins on-device).
+//
+// Considers only Rule.Enabled — the per-package enabled state in status.json
+// is NOT consulted. Use EffectiveToDeviceJSON for production push paths that
+// need per-(package, rule) resolution.
+func (rf *RulesFile) ToDeviceJSON() ([]byte, error) {
+	out := make([]map[string]any, 0, len(rf.Rules))
+	for _, r := range rf.Rules {
+		if !r.Enabled {
+			continue
+		}
+		out = append(out, ruleToDeviceMap(r))
+	}
+	buf, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal json: %w", err)
+	}
+	return append(buf, '\n'), nil
+}
+
+// ruleToDeviceMap converts a single rule to the device JSON shape. The runtime
+// distinguishes `body` (raw string) from `bodyObject` (structured JSON), so
+// we route a BodyValue into one or the other based on which field is set.
+func ruleToDeviceMap(r Rule) map[string]any {
+	m := map[string]any{
+		"name":    r.Name,
+		"enabled": true,
+	}
+	if r.Host != "" {
+		m["host"] = r.Host
+	}
+	if r.Path != "" {
+		m["path"] = r.Path
+	}
+	if r.Status != 0 {
+		m["status"] = r.Status
+	}
+	if !r.Body.IsEmpty() {
+		if r.Body.Object != nil {
+			m["bodyObject"] = r.Body.Object
+		} else {
+			m["body"] = r.Body.String
+		}
+	}
+	return m
+}

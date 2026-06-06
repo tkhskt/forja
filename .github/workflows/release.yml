@@ -1,0 +1,170 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to build (e.g. v0.1.0-test). Without this, runs in dry mode (artifacts kept on the run, no GitHub Release created).'
+        required: false
+        default: ''
+
+permissions:
+  contents: write  # required for softprops/action-gh-release
+
+jobs:
+  # ---------------------------------------------------------------
+  # 1) Build the on-device agent bundle (universal across host arch).
+  # ---------------------------------------------------------------
+  build-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK + NDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platforms;android-34 build-tools;34.0.0 ndk;25.2.9519653 cmake;3.22.1'
+
+      - name: Build agent bundle
+        run: ./gradlew :jvmti-agent:bundleAgentDex --no-daemon
+
+      - name: Upload agent artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent
+          path: |
+            jvmti-agent/build/outputs/agent/agent-bundle.dex
+            jvmti-agent/build/outputs/agent/libforja-agent-*.so
+          retention-days: 7
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------
+  # 2) Build the forja CLI per (os, arch) and bundle with the agent.
+  # ---------------------------------------------------------------
+  build-cli:
+    needs: build-agent
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: darwin,  arch: arm64 }
+          - { os: darwin,  arch: amd64 }
+          - { os: linux,   arch: arm64 }
+          - { os: linux,   arch: amd64 }
+          - { os: windows, arch: amd64 }
+          - { os: windows, arch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Resolve version string
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            v="${GITHUB_REF_NAME}"
+          elif [[ -n "${{ inputs.version }}" ]]; then
+            v="${{ inputs.version }}"
+          else
+            v="v0.0.0-dev-${GITHUB_SHA::7}"
+          fi
+          echo "version=${v}" >> "$GITHUB_OUTPUT"
+          echo "stripped=${v#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build forja binary
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: '0'
+        working-directory: cli
+        run: |
+          ext=""
+          if [ "${{ matrix.os }}" = "windows" ]; then ext=".exe"; fi
+          go build \
+            -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }}" \
+            -trimpath \
+            -o "${{ github.workspace }}/dist-build/forja${ext}" \
+            .
+
+      - name: Download agent artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: agent
+          path: dist-build/agent
+
+      - name: Assemble release archive
+        run: |
+          name="forja_${{ steps.ver.outputs.stripped }}_${{ matrix.os }}_${{ matrix.arch }}"
+          stage="dist-stage/${name}"
+          mkdir -p "${stage}/bin" "${stage}/share/forja/agent"
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            cp dist-build/forja.exe "${stage}/bin/forja.exe"
+          else
+            install -m 0755 dist-build/forja "${stage}/bin/forja"
+          fi
+          cp dist-build/agent/* "${stage}/share/forja/agent/"
+          cp LICENSE NOTICE README.md "${stage}/"
+          mkdir -p dist
+          # Windows ships as .zip (Explorer can extract natively); Unix as
+          # .tar.gz which preserves the executable bit set by `install`.
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            (cd dist-stage && zip -r "../dist/${name}.zip" "${name}" >/dev/null)
+            (cd dist && shasum -a 256 "${name}.zip" > "${name}.zip.sha256")
+          else
+            tar -C dist-stage -czf "dist/${name}.tar.gz" "${name}"
+            (cd dist && shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256")
+          fi
+
+      - name: Upload platform artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: forja-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            dist/forja_*.tar.gz*
+            dist/forja_*.zip*
+          retention-days: 7
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------
+  # 3) Publish a GitHub Release (only when triggered by a real tag).
+  # ---------------------------------------------------------------
+  publish:
+    needs: build-cli
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: forja-*
+
+      - name: Flatten into dist/
+        run: |
+          mkdir -p dist
+          find artifacts -type f \( \
+              -name 'forja_*.tar.gz' -o -name 'forja_*.tar.gz.sha256' \
+              -o -name 'forja_*.zip' -o -name 'forja_*.zip.sha256' \
+            \) -exec cp {} dist/ \;
+          ls -la dist/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/forja_*.tar.gz
+            dist/forja_*.tar.gz.sha256
+            dist/forja_*.zip
+            dist/forja_*.zip.sha256
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

@@ -1,0 +1,144 @@
+Forja
+Copyright 2026 Forja contributors
+
+This product includes software developed by the Forja project and is
+distributed under the Apache License, Version 2.0 (see LICENSE).
+
+The third-party components and licenses listed below are inventoried by
+`scripts/check-licenses.sh`, which runs:
+  - jk1's Gradle License Report plugin against :runtime / :jvmti-agent
+  - Google's go-licenses against the cli/ Go module
+
+Re-run the script after dependency changes to refresh the inventory and to
+fail-fast on any unexpected license.
+
+================================================================
+1. Components bundled in this source distribution
+================================================================
+
+OpenJDK jvmti.h
+    File:        jvmti-agent/src/main/cpp/jvmti.h
+    Copyright:   (c) 2003, 2011, Oracle and/or its affiliates.
+    License:     GNU General Public License, version 2, with the Classpath Exception.
+                 The Classpath Exception explicitly permits linking this file
+                 with independent modules under terms of the linker's choice.
+    Reference:   https://openjdk.org/legal/gplv2+ce.html
+
+================================================================
+2. Components linked into the `forja` Go binary
+================================================================
+
+The Go binary statically links the modules below. License facts are
+verified by `go-licenses report ./...`.
+
+Apache License 2.0:
+    github.com/containerd/console
+    github.com/spf13/cobra
+    gopkg.in/yaml.v3                       (dual MIT / Apache-2.0)
+
+BSD 3-Clause:
+    github.com/spf13/pflag
+    golang.org/x/sync
+    golang.org/x/sys
+    golang.org/x/term
+
+MIT License:
+    github.com/aymanbagabas/go-osc52/v2
+    github.com/charmbracelet/bubbletea
+    github.com/charmbracelet/lipgloss
+    github.com/lucasb-eyer/go-colorful
+    github.com/mattn/go-isatty
+    github.com/mattn/go-localereader      (LICENSE not in module cache for v0.0.1; full text in section 6 below)
+    github.com/mattn/go-runewidth
+    github.com/muesli/ansi
+    github.com/muesli/cancelreader
+    github.com/muesli/reflow
+    github.com/muesli/termenv
+    github.com/rivo/uniseg
+
+================================================================
+3. Components bundled into agent-bundle.dex (pushed to target devices)
+================================================================
+
+The on-device companion artifact agent-bundle.dex contains Forja's own
+classes plus the following third-party libraries (per jk1 license report
+on jvmti-agent's debugRuntimeClasspath):
+
+    org.jetbrains.kotlin:kotlin-stdlib    (Apache License 2.0)
+    org.jetbrains:annotations             (Apache License 2.0; transitive via kotlin-stdlib)
+
+================================================================
+4. Components used at build / runtime but NOT redistributed by Forja
+================================================================
+
+These are pulled in via Gradle during the build and either provided by the
+build toolchain or assumed to already exist in the target debuggable app's
+runtime. Forja does not ship copies of them.
+
+    com.google.android:android            (Apache License 2.0, AOSP source)
+    com.squareup.okhttp3:okhttp           (Apache License 2.0)
+    com.squareup.okio:okio                (Apache License 2.0, transitive via OkHttp)
+    org.jetbrains.kotlin (Gradle plugins) (Apache License 2.0)
+    com.android.library (AGP)             (Apache License 2.0)
+    Gradle build system                   (Apache License 2.0)
+
+================================================================
+5. Re-verifying this inventory
+================================================================
+
+    # Gradle side (jk1 Gradle License Report plugin via init script)
+    ./gradlew --init-script scripts/license-report.init.gradle.kts \
+        :runtime:checkLicense :jvmti-agent:checkLicense
+
+    # Go side (go-licenses)
+    go install github.com/google/go-licenses@latest
+    (cd cli && go-licenses check ./... --disallowed_types=forbidden,restricted \
+        --ignore=github.com/mattn/go-localereader)
+
+    # Both at once
+    scripts/check-licenses.sh
+
+The --ignore flag for go-localereader is intentional: the v0.0.1 tag in the
+Go module cache predates the LICENSE file that exists in the upstream
+repository, so go-licenses can't auto-detect it. The full MIT license text
+is reproduced verbatim in section 6 to satisfy the redistribution clause.
+
+Allowed-license rules live in scripts/allowed-licenses.json. Adjust that
+file if a new compatible license is intentionally introduced.
+
+The full text of the Apache License 2.0 under which Forja is released is in
+the LICENSE file at the project root (and mirrored at cli/LICENSE for
+go-licenses to discover from within the Go module).
+
+================================================================
+6. Vendored license texts for modules with missing LICENSE files
+================================================================
+
+----------------------------------------------------------------
+github.com/mattn/go-localereader v0.0.1
+Fetched from https://github.com/mattn/go-localereader/blob/master/LICENSE
+on 2026-06-07; the upstream repository carries this LICENSE but the v0.0.1
+tag in the Go module cache does not include it.
+----------------------------------------------------------------
+
+The MIT License (MIT)
+
+Copyright (c) 2022 Yasuhiro Matsumoto
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -1,0 +1,15 @@
+# Launch the dev flavor, then the staging flavor. Used to put both into a
+# "currently running" state so forja's ListDebuggablePackages returns both
+# and we can verify isolation.
+appId: com.tkhskt.forja.sample
+---
+- launchApp:
+    appId: com.tkhskt.forja.sample
+    clearState: false
+- waitForAnimationToEnd:
+    timeout: 5000
+- launchApp:
+    appId: com.tkhskt.forja.sample.staging
+    clearState: false
+- waitForAnimationToEnd:
+    timeout: 5000

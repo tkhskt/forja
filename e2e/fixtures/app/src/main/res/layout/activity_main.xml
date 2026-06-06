@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <!-- A: Use the singleton OkHttpClient eagerly built in Application.onCreate.
+         Exercises the path where agent.cpp's IterateOverInstancesOfClass
+         rewrites clients that were already on the heap at attach time. -->
+    <Button
+        android:id="@+id/fetch_singleton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="A: Fetch via SINGLETON client (Http.client)" />
+
+    <!-- B: Build a fresh OkHttpClient.Builder().build() on every click.
+         Exercises the path where agent.cpp's Breakpoint + per-thread
+         MethodExit rewrites clients built after attach. -->
+    <Button
+        android:id="@+id/fetch_new"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="B: Fetch via NEW client each time (Builder.build)" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginTop="12dp">
+
+        <TextView
+            android:id="@+id/output"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="8dp"
+            android:textIsSelectable="true"
+            android:typeface="monospace"
+            android:text="press a button to fetch" />
+    </ScrollView>
+</LinearLayout>

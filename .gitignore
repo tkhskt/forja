@@ -1,0 +1,20 @@
+# Gradle / AGP
+.gradle/
+build/
+.cxx/
+.kotlin/
+
+# Android SDK path (machine-specific)
+local.properties
+
+# IDEs
+.idea/
+*.iml
+out/
+
+# macOS
+.DS_Store
+
+# forja runtime state at the repo root only — anchored with `/` so it doesn't
+# match source paths like jvmti-agent/src/main/kotlin/com/tkhskt/forja/...
+/forja/

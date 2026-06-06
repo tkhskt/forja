@@ -1,0 +1,373 @@
+//go:build e2e
+
+// Device-sync coverage for `forja rules`: ensures the add / update / remove
+// / off flow keeps status.json, the yml catalog, and the device's effective
+// state coherent across every state transition users hit.
+//
+// Tests drive the non-interactive paths (rules add / update / remove,
+// apply, off) so they can run without a TTY. The TUI's interactive surface
+// is unit-tested via bubbletea models in internal/tui.
+package e2e_test
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// TestSyncAfterAddImmediatelyEffective: add a rule and the device must see it
+// without an explicit `forja rules` (= auto-push works end-to-end).
+func TestSyncAfterAddImmediatelyEffective(t *testing.T) {
+	resetForjaState(t, PkgDev)
+	forceStop(t, PkgDev)
+	startMainActivity(t, PkgDev)
+	clearLogcat(t)
+
+	runForja(t, "rules", "add", "immediate",
+		"--pkg", PkgDev,
+		"--host", "example.com", "--path", "/",
+		"--status", "418",
+		"--body", `{"rewritten":true}`,
+	)
+	waitForLogcat(t, "self-destruct mode enabled", 30*time.Second, "ForjaAgent")
+	maestroFlow(t, "tap_singleton_assert_418.yaml")
+}
+
+// TestSyncUpdatePatchAppliesToDevice: update a rule's status code and the
+// device should reflect the new value immediately.
+func TestSyncUpdatePatchAppliesToDevice(t *testing.T) {
+	resetForjaState(t, PkgDev)
+	forceStop(t, PkgDev)
+	startMainActivity(t, PkgDev)
+
+	runForja(t, "rules", "add", "iter",
+		"--pkg", PkgDev,
+		"--host", "example.com", "--path", "/",
+		"--status", "418",
+	)
+	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
+	maestroFlow(t, "tap_singleton_assert_418.yaml")
+
+	runForja(t, "rules", "update", "iter", "--status", "503")
+	// Status code in the response depends on the next push being effective.
+	// The agent uses lazy ingestion on rules() call → we trigger a request
+	// to force the read.
+	runInlineMaestro(t, `
+appId: com.tkhskt.forja.sample
+---
+- tapOn:
+    id: "fetch_singleton"
+- extendedWaitUntil:
+    visible:
+      text: ".*HTTP 503.*"
+    timeout: 15000
+`)
+}
+
+// TestSyncRemoveDropsFromDevice: removing a rule should drop it from the
+// device immediately.
+func TestSyncRemoveDropsFromDevice(t *testing.T) {
+	resetForjaState(t, PkgDev)
+	forceStop(t, PkgDev)
+	startMainActivity(t, PkgDev)
+
+	runForja(t, "rules", "add", "ephemeral",
+		"--pkg", PkgDev,
+		"--host", "example.com", "--path", "/",
+		"--status", "418",
+	)
+	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
+	maestroFlow(t, "tap_singleton_assert_418.yaml")
+
+	runForja(t, "rules", "remove", "ephemeral")
+	// After remove, the next request should see 200.
+	maestroFlow(t, "tap_singleton_assert_200.yaml")
+}
+
+// TestSyncOffStatusDisablesAllInJSON: forja off pushes [] AND empties the
+// package's enabled list in status.json (= view-truth invariant).
+func TestSyncOffStatusDisablesAllInJSON(t *testing.T) {
+	resetForjaState(t, PkgDev)
+	forceStop(t, PkgDev)
+	startMainActivity(t, PkgDev)
+
+	// All three rules added with --pkg so each is enabled on PkgDev (sugar
+	// path). x is in user scope (default), z in project (via --project), y
+	// also user. After this, status.json[PkgDev].enabled = [x, y, z].
+	runForja(t, "rules", "add", "x", "--pkg", PkgDev,
+		"--host", "example.com", "--status", "418")
+	runForja(t, "rules", "add", "y", "--pkg", PkgDev,
+		"--host", "example.com", "--path", "/x", "--status", "503")
+	runForja(t, "rules", "add", "z", "--pkg", PkgDev, "--project",
+		"--host", "example.com", "--path", "/y", "--status", "401")
+	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
+
+	runForja(t, "off", "--pkg", PkgDev)
+	st := readStatusJSON(t)
+	for _, name := range []string{"x", "y", "z"} {
+		if st.IsEnabled(PkgDev, name) {
+			t.Errorf("after off: %q should be disabled on %s, got %+v", name, PkgDev, st)
+		}
+	}
+	// yml files must not be touched.
+	if !strings.Contains(readRulesYml(t, "rules.local.yml"), "name: x") {
+		t.Errorf("yml lost rule x after off")
+	}
+}
+
+// TestSyncProcessKillThenNewPushReAttaches: kill the app so the cached PID
+// goes stale, then trigger any push (here via `rules update --status`) and
+// verify the cmd layer re-attaches to the new PID and the new rule definition
+// takes effect on device.
+func TestSyncProcessKillThenNewPushReAttaches(t *testing.T) {
+	resetForjaState(t, PkgDev)
+	forceStop(t, PkgDev)
+	startMainActivity(t, PkgDev)
+
+	runForja(t, "rules", "add", "rk",
+		"--pkg", PkgDev,
+		"--host", "example.com", "--path", "/",
+		"--status", "418",
+	)
+	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
+	maestroFlow(t, "tap_singleton_assert_418.yaml")
+
+	pidBefore := pidof(t, PkgDev)
+	if pidBefore == 0 {
+		t.Fatal("app should be running before kill")
+	}
+
+	forceStop(t, PkgDev)
+	startMainActivity(t, PkgDev)
+	pidAfter := pidof(t, PkgDev)
+	if pidAfter == pidBefore {
+		t.Fatalf("PID should change after force-stop+start: %d → %d", pidBefore, pidAfter)
+	}
+
+	// Now run an update to trigger re-attach.
+	clearLogcat(t)
+	runForja(t, "rules", "update", "rk", "--status", "503")
+	// Re-attach should happen → ForjaAgent attached again on the new PID.
+	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
+	runInlineMaestro(t, `
+appId: com.tkhskt.forja.sample
+---
+- tapOn:
+    id: "fetch_singleton"
+- extendedWaitUntil:
+    visible:
+      text: ".*HTTP 503.*"
+    timeout: 15000
+`)
+}
+
+// TestSyncNoOpAfterIdenticalState: an `update` that doesn't change anything
+// should still be idempotent (no error, push works, no churn).
+func TestSyncNoOpUpdateIsIdempotent(t *testing.T) {
+	resetForjaState(t, PkgDev)
+	forceStop(t, PkgDev)
+	startMainActivity(t, PkgDev)
+
+	runForja(t, "rules", "add", "noop",
+		"--pkg", PkgDev,
+		"--host", "example.com", "--status", "418")
+	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
+
+	// Calling update with no fields shouldn't change anything but also
+	// shouldn't error.
+	out, err := runForjaAllowingFailure(t, "rules", "update", "noop")
+	if err != nil {
+		t.Fatalf("empty update should succeed: %v\n%s", err, out)
+	}
+	// Yml should look the same as right after add (no enabled field, etc.).
+	yml := readRulesYml(t, "rules.local.yml")
+	if !strings.Contains(yml, "name: noop") || !strings.Contains(yml, "status: 418") {
+		t.Errorf("yml content changed unexpectedly after no-op update:\n%s", yml)
+	}
+}
+
+// TestSyncProjectAndUserBothPushed: rules in both scopes are merged and the
+// device gets all enabled ones.
+func TestSyncProjectAndUserBothPushed(t *testing.T) {
+	resetForjaState(t, PkgDev)
+	forceStop(t, PkgDev)
+	startMainActivity(t, PkgDev)
+
+	// team-rule lives in project yml (committed). Without --pkg it's a pure
+	// catalog entry — not yet pushed to any device.
+	runForja(t, "rules", "add", "team-rule", "--project",
+		"--host", "team.example.com", "--status", "200")
+	// user-rule (user scope) added with --pkg → enabled on PkgDev + pushed.
+	runForja(t, "rules", "add", "user-rule", "--pkg", PkgDev,
+		"--host", "example.com", "--path", "/",
+		"--status", "418",
+		"--body", `{"rewritten":true}`,
+	)
+	// Enable team-rule on PkgDev too so both scopes' rules are effective.
+	runForja(t, "apply", "--pkg", PkgDev, "--enable", "team-rule")
+	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
+
+	// The hit should come from user-rule (it matches the sample app's URL).
+	maestroFlow(t, "tap_singleton_assert_418.yaml")
+	waitForLogcat(t, "hit 'user-rule'", 10*time.Second, "Forja")
+}
+
+// TestSyncManualYmlEditTakesEffectOnNextCommand: a user edits forja/rules.local.yml
+// in their editor (instead of `forja rules update`). Any subsequent CLI command
+// that touches the same scope re-reads the yml from disk and propagates the
+// manual change to the device — yml is the source of truth, the CLI is just
+// one way of mutating it.
+func TestSyncManualYmlEditTakesEffectOnNextCommand(t *testing.T) {
+	resetForjaState(t, PkgDev)
+	forceStop(t, PkgDev)
+	startMainActivity(t, PkgDev)
+
+	runForja(t, "rules", "add", "hand-edit",
+		"--pkg", PkgDev,
+		"--host", "example.com", "--path", "/",
+		"--status", "418",
+	)
+	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
+	maestroFlow(t, "tap_singleton_assert_418.yaml")
+
+	// Hand-edit: swap status: 418 → 503 directly in the yml.
+	ymlPath := filepath.Join(repoRoot, "forja", "rules.local.yml")
+	raw, err := os.ReadFile(ymlPath)
+	if err != nil {
+		t.Fatalf("read yml: %v", err)
+	}
+	edited := strings.Replace(string(raw), "status: 418", "status: 503", 1)
+	if edited == string(raw) {
+		t.Fatalf("expected to replace status: 418 → 503; yml was:\n%s", raw)
+	}
+	if err := os.WriteFile(ymlPath, []byte(edited), 0o644); err != nil {
+		t.Fatalf("write yml: %v", err)
+	}
+
+	// Trigger re-sync via a no-op `rules update`. The engine re-loads the yml
+	// from disk and re-pushes, so the hand-edited status code goes to the device.
+	runForja(t, "rules", "update", "hand-edit")
+
+	runInlineMaestro(t, `
+appId: com.tkhskt.forja.sample
+---
+- tapOn:
+    id: "fetch_singleton"
+- extendedWaitUntil:
+    visible:
+      text: ".*HTTP 503.*"
+    timeout: 15000
+`)
+}
+
+// TestSyncManualYmlAddNewRuleIsPicked: appending a brand-new rule entry
+// directly in yml is picked up by the next `apply --enable`, which sees the
+// fresh catalog entry and pushes the rule to the device.
+func TestSyncManualYmlAddNewRuleIsPicked(t *testing.T) {
+	resetForjaState(t, PkgDev)
+	forceStop(t, PkgDev)
+	startMainActivity(t, PkgDev)
+
+	// A stub rule on /unused — its only job is to bring up the agent. The
+	// hand-added rule on / is what should actually take effect.
+	runForja(t, "rules", "add", "stub", "--pkg", PkgDev,
+		"--host", "example.com", "--path", "/unused", "--status", "200",
+	)
+	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
+
+	// Append a fresh catalog entry to rules.local.yml by hand. Indentation
+	// matches what the writer emits (4-space list items under rules:).
+	ymlPath := filepath.Join(repoRoot, "forja", "rules.local.yml")
+	raw, err := os.ReadFile(ymlPath)
+	if err != nil {
+		t.Fatalf("read yml: %v", err)
+	}
+	appended := string(raw) + `    - name: hand-added
+      host: example.com
+      path: /
+      status: 418
+      body: '{"by":"manual-yml"}'
+`
+	if err := os.WriteFile(ymlPath, []byte(appended), 0o644); err != nil {
+		t.Fatalf("write yml: %v", err)
+	}
+
+	// Apply: enable hand-added on PkgDev → reads updated yml → pushes.
+	runForja(t, "apply", "--pkg", PkgDev, "--enable", "hand-added")
+
+	// Tapping / should hit the hand-added rule.
+	runInlineMaestro(t, `
+appId: com.tkhskt.forja.sample
+---
+- tapOn:
+    id: "fetch_singleton"
+- extendedWaitUntil:
+    visible:
+      text: ".*HTTP 418.*"
+    timeout: 15000
+- assertVisible:
+    text: ".*manual-yml.*"
+`)
+}
+
+// TestSyncManualYmlRemoveRuleDropsFromDevice: deleting a rule entry directly in
+// yml (without `forja rules remove`) drops it from the device on next sync.
+func TestSyncManualYmlRemoveRuleDropsFromDevice(t *testing.T) {
+	resetForjaState(t, PkgDev)
+	forceStop(t, PkgDev)
+	startMainActivity(t, PkgDev)
+
+	runForja(t, "rules", "add", "doomed", "--pkg", PkgDev,
+		"--host", "example.com", "--path", "/",
+		"--status", "418",
+	)
+	// A second rule (also enabled on PkgDev) we can `update --no-op` against
+	// to trigger re-sync after the doomed entry is gone. Without --pkg, keep
+	// would be yml-only and update wouldn't auto-propagate anywhere.
+	runForja(t, "rules", "add", "keep", "--pkg", PkgDev,
+		"--host", "example.com", "--path", "/unused",
+		"--status", "200",
+	)
+	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
+	maestroFlow(t, "tap_singleton_assert_418.yaml")
+
+	// Strip the `doomed` entry from yml.
+	ymlPath := filepath.Join(repoRoot, "forja", "rules.local.yml")
+	raw, err := os.ReadFile(ymlPath)
+	if err != nil {
+		t.Fatalf("read yml: %v", err)
+	}
+	cleaned := stripYmlRuleByName(string(raw), "doomed")
+	if cleaned == string(raw) {
+		t.Fatalf("expected to remove `doomed` entry; yml was:\n%s", raw)
+	}
+	if err := os.WriteFile(ymlPath, []byte(cleaned), 0o644); err != nil {
+		t.Fatalf("write yml: %v", err)
+	}
+
+	// Trigger re-sync against the remaining rule.
+	runForja(t, "rules", "update", "keep")
+
+	maestroFlow(t, "tap_singleton_assert_200.yaml")
+}
+
+// TestSyncOffPushesEmptyArray: device's rules.json should be replaced with
+// [] (= the agent reads, finds empty, removes the file, behavior reverts).
+func TestSyncOffPushesEmptyArray(t *testing.T) {
+	resetForjaState(t, PkgDev)
+	forceStop(t, PkgDev)
+	startMainActivity(t, PkgDev)
+
+	runForja(t, "rules", "add", "before-off",
+		"--pkg", PkgDev,
+		"--host", "example.com", "--path", "/",
+		"--status", "418",
+	)
+	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
+	maestroFlow(t, "tap_singleton_assert_418.yaml")
+
+	runForja(t, "off", "--pkg", PkgDev)
+	maestroFlow(t, "tap_singleton_assert_200.yaml")
+}

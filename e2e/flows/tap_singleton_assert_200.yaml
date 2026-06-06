@@ -1,0 +1,10 @@
+# Tap "A: SINGLETON" and assert UI shows HTTP 200 (forja not active).
+# No launchApp — see tap_singleton.yaml for why.
+appId: com.tkhskt.forja.sample
+---
+- tapOn:
+    id: "fetch_singleton"
+- extendedWaitUntil:
+    visible:
+      text: ".*HTTP 200.*"
+    timeout: 15000
