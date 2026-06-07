@@ -541,6 +541,12 @@ func pushToApp(app, opLabel string) error {
 //     something was actually toggled. A view-only quit is truly a no-op.
 //   - On dirty quit, push the new effective state to the device so things
 //     match what the user just configured.
+//
+// All three stages (optional picker → device load → rules toggles) run
+// inside a single tea.Program so the alt screen stays held throughout. An
+// earlier implementation ran the picker and the rules view as two separate
+// programs, which produced a visible flicker each time the alt screen was
+// torn down and re-entered between them.
 func runRulesTUI(app string) error {
 	paths := rulesPaths()
 	if app != "" {
@@ -549,48 +555,69 @@ func runRulesTUI(app string) error {
 			return err
 		}
 		app = resolved
-	} else {
-		picked, err := runAppPicker()
+	}
+
+	// Apps list + alias annotations for the picker. Only queried when no
+	// preset app was supplied; the picker stage is skipped otherwise.
+	var apps []string
+	aliasesByApp := map[string][]string{}
+	if app == "" {
+		a := adb.New()
+		list, err := a.ListDebuggableApps(context.Background())
 		if err != nil {
-			return err
+			return fmt.Errorf("list debuggable apps: %w", err)
 		}
-		if picked == "" {
-			return nil // user cancelled
-		}
-		app = picked
-	}
-
-	// Load effective rules for the chosen app. The caller may have just
-	// arrived from --app without ever touching status.json, which is fine:
-	// LoadEffective returns rules with .Enabled = status.IsEnabled(app, name),
-	// and absent (= never touched) defaults to false. The TUI shows them as off.
-	eff, err := rules.LoadEffective(paths, app)
-	if err != nil {
-		return err
-	}
-
-	deviceStatus := tui.DeviceStatus{Message: "device status unavailable"}
-	if eng, err := engine.New(globals.BundleDir); err == nil {
-		s := eng.QueryAttachStatus(context.Background(), app)
-		// If the device has demonstrably lost the rules for this app, sync
-		// status.json[app] to that reality so the checkboxes don't lie.
-		if s.Kind == engine.StatusAgentLiveButOff || s.Kind == engine.StatusAgentStale {
-			if err := rules.ClearApp(paths, app); err == nil {
-				if e, lerr := rules.LoadEffective(paths, app); lerr == nil {
-					eff = e
+		apps = list
+		if al, err := rules.LoadAliases(paths); err == nil {
+			for _, p := range apps {
+				if alts := al.AliasesFor(p); len(alts) > 0 {
+					aliasesByApp[p] = alts
 				}
 			}
 		}
-		deviceStatus = tui.DeviceStatus{Message: s.Message(), Live: s.Live()}
 	}
 
-	model := tui.NewRulesModel(app, eff, deviceStatus)
+	// loadDeps runs in the wrapper's tea.Cmd after the user picks an app
+	// (or immediately when an app was preset). It performs the device-side
+	// status query and reads back the effective rule set, returning both
+	// for the rules view to consume.
+	loadDeps := func(ctx context.Context, picked string) ([]config.EffectiveRule, tui.DeviceStatus, error) {
+		eff, err := rules.LoadEffective(paths, picked)
+		if err != nil {
+			return nil, tui.DeviceStatus{}, err
+		}
+		deviceStatus := tui.DeviceStatus{Message: "device status unavailable"}
+		if eng, err := engine.New(globals.BundleDir); err == nil {
+			s := eng.QueryAttachStatus(ctx, picked)
+			// If the device has demonstrably lost the rules for this app,
+			// sync status.json[picked] to that reality so the checkboxes
+			// don't lie before they're rendered.
+			if s.Kind == engine.StatusAgentLiveButOff || s.Kind == engine.StatusAgentStale {
+				if err := rules.ClearApp(paths, picked); err == nil {
+					if e, lerr := rules.LoadEffective(paths, picked); lerr == nil {
+						eff = e
+					}
+				}
+			}
+			deviceStatus = tui.DeviceStatus{Message: s.Message(), Live: s.Live()}
+		}
+		return eff, deviceStatus, nil
+	}
+
+	model := tui.NewRulesAppModel(app, apps, aliasesByApp, loadDeps)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("tui: %w", err)
 	}
-	updated, dirty := finalModel.(tui.RulesModel).Result()
+	picked, updated, dirty, cancelled, loadErr := finalModel.(tui.RulesAppModel).Result()
+	if loadErr != nil {
+		return loadErr
+	}
+	if cancelled {
+		return nil
+	}
+	app = picked
 	if !dirty {
 		return nil
 	}
@@ -616,37 +643,6 @@ func runRulesTUI(app string) error {
 	}
 	fmt.Printf("[toggled + synced] %s: %d rule(s) enabled\n", app, len(enabledNames))
 	return nil
-}
-
-// runAppPicker queries the device for debuggable apps, runs the picker
-// TUI, and returns the selected app name (empty string on cancel).
-func runAppPicker() (string, error) {
-	a := adb.New()
-	apps, err := a.ListDebuggableApps(context.Background())
-	if err != nil {
-		return "", fmt.Errorf("list debuggable apps: %w", err)
-	}
-	// Annotate the picker with any aliases the user has registered. Failure
-	// to load is non-fatal — the picker just renders without annotations.
-	aliasesByApp := map[string][]string{}
-	if a, err := rules.LoadAliases(rulesPaths()); err == nil {
-		for _, app := range apps {
-			if alts := a.AliasesFor(app); len(alts) > 0 {
-				aliasesByApp[app] = alts
-			}
-		}
-	}
-	model := tui.NewAppPickerModel(apps, aliasesByApp)
-	p := tea.NewProgram(model, tea.WithAltScreen())
-	finalModel, err := p.Run()
-	if err != nil {
-		return "", fmt.Errorf("tui (app picker): %w", err)
-	}
-	sel, ok := finalModel.(tui.AppPickerModel).Result()
-	if !ok {
-		return "", nil
-	}
-	return sel, nil
 }
 
 // parseBody turns a CLI --body string into a BodyValue. JSON-object-looking
