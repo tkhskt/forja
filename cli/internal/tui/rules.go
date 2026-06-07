@@ -149,11 +149,11 @@ func (m RulesModel) View() string {
 		if r.Enabled {
 			mark = "[x]"
 		}
-		host := stringOrStar(r.Host)
-		path := stringOrStar(r.Path)
+		host := stringOrStar(r.Match.Host)
+		path := stringOrStar(r.Match.Path)
 		status := "-"
-		if r.Status != 0 {
-			status = fmt.Sprintf("%d", r.Status)
+		if r.Response.Status != 0 {
+			status = fmt.Sprintf("%d", r.Response.Status)
 		}
 		line := fmt.Sprintf("  %s %-30s host=%-24s path=%-20s → %s",
 			mark, truncate(r.Name, 30), truncate(host, 24), truncate(path, 20), status)

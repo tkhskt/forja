@@ -147,11 +147,11 @@ func TestUpdatePatchAcrossScopes(t *testing.T) {
 	}
 	uf, _ := config.Load(p.Local)
 	r := uf.FindRule("x")
-	if r.Status != 503 {
-		t.Errorf("status not updated: %d", r.Status)
+	if r.Response.Status != 503 {
+		t.Errorf("status not updated: %d", r.Response.Status)
 	}
-	if r.Host != "a.com" {
-		t.Errorf("host should be preserved, got %q", r.Host)
+	if r.Match.Host != "a.com" {
+		t.Errorf("host should be preserved, got %q", r.Match.Host)
 	}
 }
 
@@ -262,7 +262,7 @@ func TestLoadEffectiveMergesAndOverridesPerApp(t *testing.T) {
 	if len(rules) != 3 {
 		t.Fatalf("want 3 effective rules, got %d: %+v", len(rules), rules)
 	}
-	if rules[0].Name != "team-b" || rules[0].Scope != config.ScopeLocal || rules[0].Status != 999 || !rules[0].Enabled {
+	if rules[0].Name != "team-b" || rules[0].Scope != config.ScopeLocal || rules[0].Response.Status != 999 || !rules[0].Enabled {
 		t.Errorf("rules[0]: %+v", rules[0])
 	}
 	if rules[1].Name != "personal" || !rules[1].Enabled {
@@ -317,8 +317,8 @@ func TestAddWithBodyFile(t *testing.T) {
 	}
 	rf, _ := config.Load(p.Local)
 	r := rf.FindRule("x")
-	if r.BodyFile != "responses/x.json" {
-		t.Errorf("bodyFile not stored: %q", r.BodyFile)
+	if r.Response.BodyFile != "responses/x.json" {
+		t.Errorf("bodyFile not stored: %q", r.Response.BodyFile)
 	}
 }
 
@@ -343,11 +343,11 @@ func TestUpdateSwapsBodyToBodyFile(t *testing.T) {
 	}
 	rf, _ := config.Load(p.Local)
 	r := rf.FindRule("x")
-	if r.BodyFile != "external.json" {
-		t.Errorf("bodyFile not set: %q", r.BodyFile)
+	if r.Response.BodyFile != "external.json" {
+		t.Errorf("bodyFile not set: %q", r.Response.BodyFile)
 	}
-	if r.Body != nil {
-		t.Errorf("inline body should be cleared: %+v", r.Body)
+	if r.Response.Body != nil {
+		t.Errorf("inline body should be cleared: %+v", r.Response.Body)
 	}
 }
 
@@ -360,11 +360,11 @@ func TestUpdateSwapsBodyFileToBody(t *testing.T) {
 	}
 	rf, _ := config.Load(p.Local)
 	r := rf.FindRule("x")
-	if r.BodyFile != "" {
-		t.Errorf("bodyFile should be cleared: %q", r.BodyFile)
+	if r.Response.BodyFile != "" {
+		t.Errorf("bodyFile should be cleared: %q", r.Response.BodyFile)
 	}
-	if r.Body == nil || r.Body.String != "inline now" {
-		t.Errorf("body not updated: %+v", r.Body)
+	if r.Response.Body == nil || r.Response.Body.String != "inline now" {
+		t.Errorf("body not updated: %+v", r.Response.Body)
 	}
 }
 

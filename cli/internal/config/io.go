@@ -294,13 +294,13 @@ const (
 //
 // Relative BodyFile paths are resolved against EffectiveRule.BaseDir.
 func (er *EffectiveRule) ResolveBody() (*BodyValue, error) {
-	if er.BodyFile == "" {
-		return er.Body, nil
+	if er.Response.BodyFile == "" {
+		return er.Response.Body, nil
 	}
-	if er.Body != nil && !er.Body.IsEmpty() {
+	if er.Response.Body != nil && !er.Response.Body.IsEmpty() {
 		return nil, fmt.Errorf("rule %q: cannot set both body and bodyFile", er.Name)
 	}
-	path := er.BodyFile
+	path := er.Response.BodyFile
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(er.BaseDir, path)
 	}
@@ -308,7 +308,7 @@ func (er *EffectiveRule) ResolveBody() (*BodyValue, error) {
 	if err != nil {
 		return nil, fmt.Errorf("rule %q: read bodyFile %s: %w", er.Name, path, err)
 	}
-	if strings.EqualFold(filepath.Ext(er.BodyFile), ".json") {
+	if strings.EqualFold(filepath.Ext(er.Response.BodyFile), ".json") {
 		var m map[string]any
 		if err := json.Unmarshal(data, &m); err != nil {
 			return nil, fmt.Errorf("rule %q: parse %s as JSON object: %w", er.Name, path, err)
@@ -424,28 +424,30 @@ func (rf *RulesFile) ToDeviceJSON() ([]byte, error) {
 	return append(buf, '\n'), nil
 }
 
-// ruleToDeviceMap converts a single rule to the device JSON shape. The runtime
-// distinguishes `body` (raw string) from `bodyObject` (structured JSON), so
-// we route a BodyValue into one or the other based on which field is set.
+// ruleToDeviceMap converts a single rule to the device JSON shape. The
+// yml's nested `match` + `response` groups are flattened back to the flat
+// wire format the runtime expects ({name, enabled, host, path, status, body}).
+// Kotlin's parseList stays unchanged; the nesting is purely an authoring
+// convenience for hand-edited yml.
 func ruleToDeviceMap(r Rule) map[string]any {
 	m := map[string]any{
 		"name":    r.Name,
 		"enabled": true,
 	}
-	if r.Host != "" {
-		m["host"] = r.Host
+	if r.Match.Host != "" {
+		m["host"] = r.Match.Host
 	}
-	if r.Path != "" {
-		m["path"] = r.Path
+	if r.Match.Path != "" {
+		m["path"] = r.Match.Path
 	}
-	if r.Status != 0 {
-		m["status"] = r.Status
+	if r.Response.Status != 0 {
+		m["status"] = r.Response.Status
 	}
-	if !r.Body.IsEmpty() {
-		if r.Body.Object != nil {
-			m["bodyObject"] = r.Body.Object
+	if !r.Response.Body.IsEmpty() {
+		if r.Response.Body.Object != nil {
+			m["bodyObject"] = r.Response.Body.Object
 		} else {
-			m["body"] = r.Body.String
+			m["body"] = r.Response.Body.String
 		}
 	}
 	return m

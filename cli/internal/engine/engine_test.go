@@ -186,8 +186,12 @@ func TestPushSendsEnabledRulesAsJson(t *testing.T) {
 
 	rf := &config.RulesFile{
 		Rules: []config.Rule{
-			{Name: "a", Enabled: true, Host: "x.com", Status: 500},
-			{Name: "b", Enabled: false, Host: "y.com", Status: 200},
+			{Name: "a", Enabled: true,
+				Match:    config.Match{Host: "x.com"},
+				Response: config.Response{Status: 500}},
+			{Name: "b", Enabled: false,
+				Match:    config.Match{Host: "y.com"},
+				Response: config.Response{Status: 200}},
 		},
 	}
 	if err := e.Push(context.Background(), "com.example.app", rf); err != nil {
@@ -342,7 +346,9 @@ func TestQueryAttachStatusLiveAfterPushFollowingOff(t *testing.T) {
 		t.Fatalf("Off: %v", err)
 	}
 	rf := &config.RulesFile{
-		Rules: []config.Rule{{Name: "a", Enabled: true, Host: "x.com", Status: 500}},
+		Rules: []config.Rule{{Name: "a", Enabled: true,
+			Match:    config.Match{Host: "x.com"},
+			Response: config.Response{Status: 500}}},
 	}
 	if err := e.Push(context.Background(), "com.example.app", rf); err != nil {
 		t.Fatalf("Push after Off: %v", err)

@@ -21,8 +21,8 @@ type RulesFile struct {
 	Rules []Rule `yaml:"rules"`
 }
 
-// Rule is one rewrite rule. Match fields (Host, Path) are AND-ed; an empty
-// field means "no constraint on this dimension".
+// Rule is one rewrite rule. Its two sub-structs split the catalog cleanly
+// into "when does this fire?" (Match) and "what does it do?" (Response).
 //
 // `Enabled` is intentionally NOT persisted to the yaml file (yaml:"-"). The
 // enabled state lives in forja/status.json so that toggling a rule on/off
@@ -30,6 +30,22 @@ type RulesFile struct {
 // remains on the struct because it's used in-process when materializing the
 // "effective" view (= rules merged with status overrides) for the device JSON
 // payload.
+type Rule struct {
+	Name     string   `yaml:"name"`
+	Enabled  bool     `yaml:"-"`
+	Match    Match    `yaml:"match,omitempty"`
+	Response Response `yaml:"response,omitempty"`
+}
+
+// Match collects the request-side fields that decide whether a rule fires.
+// Empty fields mean "no constraint on this dimension". All non-empty fields
+// are AND-ed together.
+type Match struct {
+	Host string `yaml:"host,omitempty"`
+	Path string `yaml:"path,omitempty"`
+}
+
+// Response collects the fields that get applied to a matched response.
 //
 // `Body` and `BodyFile` are mutually exclusive ways to supply the response
 // body. Body is inline (always a string scalar in the yml — to send a JSON
@@ -39,14 +55,22 @@ type RulesFile struct {
 // read and:
 //   - `.json` extension → parsed as JSON object → emitted as `bodyObject`
 //   - anything else      → raw bytes → emitted as `body` (string)
-type Rule struct {
-	Name     string     `yaml:"name"`
-	Enabled  bool       `yaml:"-"`
-	Host     string     `yaml:"host,omitempty"`
-	Path     string     `yaml:"path,omitempty"`
+type Response struct {
 	Status   int        `yaml:"status,omitempty"`
 	Body     *BodyValue `yaml:"body,omitempty"`
 	BodyFile string     `yaml:"bodyFile,omitempty"`
+}
+
+// IsZero reports whether m has no fields set. Used by yaml MarshalYAML to
+// omit empty Match blocks from the output.
+func (m Match) IsZero() bool {
+	return m.Host == "" && m.Path == ""
+}
+
+// IsZero reports whether r has no fields set. Used by yaml MarshalYAML to
+// omit empty Response blocks from the output.
+func (r Response) IsZero() bool {
+	return r.Status == 0 && r.Body.IsEmpty() && r.BodyFile == ""
 }
 
 // BodyValue holds the response body for a rule. In the yml the body is

@@ -28,15 +28,19 @@ func TestLoadParsesRules(t *testing.T) {
 extraField: ignored-value
 rules:
   - name: mock-failure
-    host: example.com
-    path: /foo
-    status: 500
-    body: '{"message":"failure"}'
+    match:
+      host: example.com
+      path: /foo
+    response:
+      status: 500
+      body: '{"message":"failure"}'
   - name: slow-bar
-    host: example.com
-    path: /bar
-    status: 200
-    body: "raw string body"
+    match:
+      host: example.com
+      path: /bar
+    response:
+      status: 200
+      body: "raw string body"
 `
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
@@ -49,18 +53,18 @@ rules:
 		t.Fatalf("want 2 rules, got %d", len(rf.Rules))
 	}
 	r0 := rf.Rules[0]
-	if r0.Name != "mock-failure" || r0.Status != 500 {
+	if r0.Name != "mock-failure" || r0.Response.Status != 500 {
 		t.Errorf("rule[0] unexpected: %+v", r0)
 	}
 	// In the yml everything is a string — structure-carrying JSON arrives
 	// as String, not Object. The CLI's --body auto-detect is the only path
 	// that ever sets Object.
-	if r0.Body == nil || r0.Body.String != `{"message":"failure"}` {
-		t.Errorf("rule[0] body not preserved as JSON string: %+v", r0.Body)
+	if r0.Response.Body == nil || r0.Response.Body.String != `{"message":"failure"}` {
+		t.Errorf("rule[0] body not preserved as JSON string: %+v", r0.Response.Body)
 	}
 	r1 := rf.Rules[1]
-	if r1.Body == nil || r1.Body.String != "raw string body" {
-		t.Errorf("rule[1] body not scalar: %+v", r1.Body)
+	if r1.Response.Body == nil || r1.Response.Body.String != "raw string body" {
+		t.Errorf("rule[1] body not scalar: %+v", r1.Response.Body)
 	}
 }
 
@@ -69,10 +73,12 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	path := filepath.Join(dir, "sub", "rules.yml") // exercise MkdirAll
 	orig := &RulesFile{
 		Rules: []Rule{
-			{Name: "a", Enabled: true, Host: "x.com", Status: 200,
-				Body: &BodyValue{Object: map[string]any{"ok": true}}},
-			{Name: "b", Enabled: false, Path: "/baz",
-				Body: &BodyValue{String: "scalar"}},
+			{Name: "a", Enabled: true,
+				Match:    Match{Host: "x.com"},
+				Response: Response{Status: 200, Body: &BodyValue{Object: map[string]any{"ok": true}}}},
+			{Name: "b", Enabled: false,
+				Match:    Match{Path: "/baz"},
+				Response: Response{Body: &BodyValue{String: "scalar"}}},
 		},
 	}
 	if err := Save(path, orig); err != nil {
@@ -87,11 +93,11 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 	// Object bodies are saved as JSON-encoded scalars, so on read-back the
 	// content moves into String (Object is lossy by design — see types.go).
-	if back.Rules[0].Body == nil || back.Rules[0].Body.String != `{"ok":true}` {
-		t.Errorf("rule[0] body round-trip broken: %+v", back.Rules[0].Body)
+	if back.Rules[0].Response.Body == nil || back.Rules[0].Response.Body.String != `{"ok":true}` {
+		t.Errorf("rule[0] body round-trip broken: %+v", back.Rules[0].Response.Body)
 	}
-	if back.Rules[1].Body == nil || back.Rules[1].Body.String != "scalar" {
-		t.Errorf("rule[1] body round-trip broken: %+v", back.Rules[1].Body)
+	if back.Rules[1].Response.Body == nil || back.Rules[1].Response.Body.String != "scalar" {
+		t.Errorf("rule[1] body round-trip broken: %+v", back.Rules[1].Response.Body)
 	}
 }
 
@@ -277,11 +283,15 @@ func TestStatusJSONLoadIgnoresMetaKeys(t *testing.T) {
 func TestToDeviceJSONEnabledOnly(t *testing.T) {
 	rf := &RulesFile{
 		Rules: []Rule{
-			{Name: "on", Enabled: true, Host: "x.com", Status: 500,
-				Body: &BodyValue{Object: map[string]any{"k": "v"}}},
-			{Name: "off", Enabled: false, Host: "x.com", Status: 200},
-			{Name: "scalar-body", Enabled: true, Path: "/p",
-				Body: &BodyValue{String: "plain"}},
+			{Name: "on", Enabled: true,
+				Match:    Match{Host: "x.com"},
+				Response: Response{Status: 500, Body: &BodyValue{Object: map[string]any{"k": "v"}}}},
+			{Name: "off", Enabled: false,
+				Match:    Match{Host: "x.com"},
+				Response: Response{Status: 200}},
+			{Name: "scalar-body", Enabled: true,
+				Match:    Match{Path: "/p"},
+				Response: Response{Body: &BodyValue{String: "plain"}}},
 		},
 	}
 	js, err := rf.ToDeviceJSON()
@@ -336,9 +346,14 @@ func TestToDeviceJSONEnabledOnly(t *testing.T) {
 //  evaluates true.)
 func TestToDeviceJSONOmitsEmptyMatchFields(t *testing.T) {
 	rf := &RulesFile{Rules: []Rule{
-		{Name: "host-only", Enabled: true, Host: "example.com", Status: 418},
-		{Name: "path-only", Enabled: true, Path: "/api", Status: 418},
-		{Name: "status-only", Enabled: true, Status: 503},
+		{Name: "host-only", Enabled: true,
+			Match:    Match{Host: "example.com"},
+			Response: Response{Status: 418}},
+		{Name: "path-only", Enabled: true,
+			Match:    Match{Path: "/api"},
+			Response: Response{Status: 418}},
+		{Name: "status-only", Enabled: true,
+			Response: Response{Status: 503}},
 	}}
 	js, err := rf.ToDeviceJSON()
 	if err != nil {
@@ -374,7 +389,7 @@ func TestResolveBodyJSONFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	er := &EffectiveRule{
-		Rule:    Rule{Name: "x", BodyFile: "resp.json"},
+		Rule:    Rule{Name: "x", Response: Response{BodyFile: "resp.json"}},
 		Scope:   ScopeLocal,
 		BaseDir: dir,
 	}
@@ -397,7 +412,7 @@ func TestResolveBodyPlainTextFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	er := &EffectiveRule{
-		Rule:    Rule{Name: "x", BodyFile: "resp.txt"},
+		Rule:    Rule{Name: "x", Response: Response{BodyFile: "resp.txt"}},
 		Scope:   ScopeLocal,
 		BaseDir: dir,
 	}
@@ -417,7 +432,7 @@ func TestResolveBodyAbsolutePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	er := &EffectiveRule{
-		Rule:    Rule{Name: "x", BodyFile: abs},
+		Rule:    Rule{Name: "x", Response: Response{BodyFile: abs}},
 		Scope:   ScopeLocal,
 		BaseDir: "/tmp/other-dir-doesnt-matter",
 	}
@@ -433,7 +448,7 @@ func TestResolveBodyAbsolutePath(t *testing.T) {
 func TestResolveBodyInlineBodyTakesPrecedenceWhenFileEmpty(t *testing.T) {
 	// When BodyFile is empty, return inline Body unchanged.
 	er := &EffectiveRule{
-		Rule: Rule{Name: "x", Body: &BodyValue{Object: map[string]any{"k": "v"}}},
+		Rule: Rule{Name: "x", Response: Response{Body: &BodyValue{Object: map[string]any{"k": "v"}}}},
 	}
 	b, err := er.ResolveBody()
 	if err != nil {
@@ -447,9 +462,11 @@ func TestResolveBodyInlineBodyTakesPrecedenceWhenFileEmpty(t *testing.T) {
 func TestResolveBodyBothSetIsError(t *testing.T) {
 	er := &EffectiveRule{
 		Rule: Rule{
-			Name:     "x",
-			Body:     &BodyValue{String: "inline"},
-			BodyFile: "some.json",
+			Name: "x",
+			Response: Response{
+				Body:     &BodyValue{String: "inline"},
+				BodyFile: "some.json",
+			},
 		},
 		BaseDir: "/tmp",
 	}
@@ -461,7 +478,7 @@ func TestResolveBodyBothSetIsError(t *testing.T) {
 
 func TestResolveBodyMissingFile(t *testing.T) {
 	er := &EffectiveRule{
-		Rule:    Rule{Name: "x", BodyFile: "nonexistent.json"},
+		Rule:    Rule{Name: "x", Response: Response{BodyFile: "nonexistent.json"}},
 		BaseDir: t.TempDir(),
 	}
 	_, err := er.ResolveBody()
@@ -477,7 +494,7 @@ func TestEffectiveToDeviceJSONResolvesBodyFile(t *testing.T) {
 	}
 	rules := []EffectiveRule{
 		{
-			Rule:    Rule{Name: "a", Enabled: true, Status: 500, BodyFile: "team.json"},
+			Rule:    Rule{Name: "a", Enabled: true, Response: Response{Status: 500, BodyFile: "team.json"}},
 			Scope:   ScopeLocal,
 			BaseDir: dir,
 		},

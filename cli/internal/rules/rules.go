@@ -140,12 +140,16 @@ func Add(paths Paths, scope Scope, opts AddOptions) error {
 	}
 
 	r := config.Rule{
-		Name:     opts.Name,
-		Host:     opts.Host,
-		Path:     opts.Path,
-		Status:   opts.Status,
-		Body:     opts.Body,
-		BodyFile: opts.BodyFile,
+		Name: opts.Name,
+		Match: config.Match{
+			Host: opts.Host,
+			Path: opts.Path,
+		},
+		Response: config.Response{
+			Status:   opts.Status,
+			Body:     opts.Body,
+			BodyFile: opts.BodyFile,
+		},
 	}
 	if err := rf.AddRule(r); err != nil {
 		return err
@@ -250,21 +254,21 @@ func Update(paths Paths, name string, scope *Scope, opts UpdateOptions) error {
 		return errors.New("body and bodyFile are mutually exclusive on update")
 	}
 	if opts.Host != nil {
-		r.Host = *opts.Host
+		r.Match.Host = *opts.Host
 	}
 	if opts.Path != nil {
-		r.Path = *opts.Path
+		r.Match.Path = *opts.Path
 	}
 	if opts.Status != nil {
-		r.Status = *opts.Status
+		r.Response.Status = *opts.Status
 	}
 	if opts.Body != nil {
-		r.Body = opts.Body
-		r.BodyFile = "" // clear the file ref so they don't fight
+		r.Response.Body = opts.Body
+		r.Response.BodyFile = "" // clear the file ref so they don't fight
 	}
 	if opts.BodyFile != nil {
-		r.BodyFile = *opts.BodyFile
-		r.Body = nil // clear the inline body
+		r.Response.BodyFile = *opts.BodyFile
+		r.Response.Body = nil // clear the inline body
 	}
 	return config.Save(path, rf)
 }

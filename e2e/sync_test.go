@@ -285,10 +285,12 @@ func TestSyncManualYmlAddNewRuleIsPicked(t *testing.T) {
 		t.Fatalf("read yml: %v", err)
 	}
 	appended := string(raw) + `    - name: hand-added
-      host: example.com
-      path: /
-      status: 418
-      body: '{"by":"manual-yml"}'
+      match:
+        host: example.com
+        path: /
+      response:
+        status: 418
+        body: '{"by":"manual-yml"}'
 `
 	if err := os.WriteFile(ymlPath, []byte(appended), 0o644); err != nil {
 		t.Fatalf("write yml: %v", err)

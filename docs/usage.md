@@ -99,17 +99,19 @@ forja apply --app com.acme.plugin --enable y  # unknown alias → treated as a l
 
 ## Shared flags on `rules add / update`
 
+CLI flags stay flat; forja distributes them into the yml's `match:` / `response:` groups when it writes the file.
+
 ```
 --app        sugar: after editing yml, also enable on the given app and push
              (when omitted, only the yml is touched)
---host       match: exact HTTP host
---path       match: substring of encoded path
---status     rewrite: HTTP status code
---body       rewrite: inline body (JSON-object-looking strings become bodyObject,
-             everything else is sent as a raw string)
---body-file  rewrite: read the body content from an external file
-             (path is relative to the yml's directory, or absolute)
-             .json extension → sent as bodyObject; anything else → sent as a raw string
+--host       match: exact HTTP host           (→ match.host)
+--path       match: substring of encoded path (→ match.path)
+--status     response: HTTP status code       (→ response.status)
+--body       response: inline body            (→ response.body — JSON-object-looking
+             strings become bodyObject on the wire, everything else is sent raw)
+--body-file  response: external file path     (→ response.bodyFile)
+             path is relative to the yml's directory, or absolute
+             .json extension → sent as bodyObject; anything else → raw string
 --project    target the project scope (default is local)
 --no-sync    (update / remove only) suppress the auto-push
 ```
@@ -136,43 +138,67 @@ When the same rule name appears in both project and local scopes (= shadow):
 
 ### `forja/rules.yml` / `forja/rules.local.yml`
 
-Same schema in both files. The yml holds **no applicationId field and no `enabled` field** — it's a pure rule catalog:
+Same schema in both files. The yml holds **no applicationId field and no `enabled` field** — it's a pure rule catalog. Each rule is split into two nested groups: **`match:`** decides whether the rule fires, **`response:`** decides what gets sent back.
 
 ```yaml
 rules:
   - name: mock-failure
-    host: example.com
-    path: /foo
-    status: 500
-    body: '{"message":"failure"}'    # JSON object → encoded as a string in the yml
+    match:
+      host: example.com
+      path: /foo
+    response:
+      status: 500
+      body: '{"message":"failure"}'    # JSON object → encoded as a string in the yml
   - name: slow-bar
-    host: example.com
-    path: /bar
-    status: 200
-    body: "plain string body"        # any other string → sent as-is
+    match:
+      host: example.com
+      path: /bar
+    response:
+      status: 200
+      body: "plain string body"        # any other string → sent as-is
   - name: big-response
-    host: example.com
-    path: /heavy
-    status: 200
-    bodyFile: responses/heavy.json   # external file (relative to the yml's directory, or absolute)
+    match:
+      host: example.com
+      path: /heavy
+    response:
+      status: 200
+      bodyFile: responses/heavy.json   # external file (relative to the yml's directory, or absolute)
 ```
 
-The `body:` field is **always a string scalar in the yml**. To send a JSON object, write it as a JSON-encoded string (as in `mock-failure` above) or use `bodyFile:` for larger payloads. The earlier `body:\n  key: value` mapping form is no longer supported — the yml will fail to load with a hint pointing at the supported forms.
+Both `match:` and `response:` are optional. A rule with only `response:` matches every request; a rule with only `match:` is a no-op (and gets flagged by `rules add` if it would have nothing to do).
 
-`bodyFile` is mutually exclusive with `body`. At push time the file is read and:
+`response.body` is **always a string scalar in the yml**. To send a JSON object, write it as a JSON-encoded string (as in `mock-failure` above) or use `bodyFile:` for larger payloads. The earlier `body:\n  key: value` mapping form is not supported — the yml will fail to load with a hint pointing at the supported forms.
+
+`response.bodyFile` is mutually exclusive with `response.body`. At push time the file is read and:
 - `.json` extension → parsed as a JSON object → sent as `bodyObject`
 - anything else → raw bytes → sent as a raw string
 
 So `big-response` above reads `forja/responses/heavy.json`. Handy when you don't want a large JSON blob or HTML template inlined in the yml.
 
+### Fields
+
+`match:`
+
 | Field | Purpose |
 |---|---|
-| `name` | Identifier (handle for add/remove, unique workspace-wide) |
 | `host` | Exact host match |
 | `path` | Substring of encoded path |
+
+`response:`
+
+| Field | Purpose |
+|---|---|
 | `status` | Replacement HTTP status |
 | `body` | Inline body as a string scalar (write JSON objects as JSON-encoded strings: `'{"k":"v"}'`) |
 | `bodyFile` | Read body content from an external file (mutually exclusive with `body`) |
+
+Top-level:
+
+| Field | Purpose |
+|---|---|
+| `name` | Identifier (handle for add/remove, unique workspace-wide) |
+| `match` | Match conditions group (see above) |
+| `response` | Replacement response group (see above) |
 
 Only **the first matching rule** in the array is applied (OkHttp interceptor semantics).
 
