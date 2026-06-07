@@ -361,13 +361,19 @@ func TestSyncOffPushesEmptyArray(t *testing.T) {
 	resetForjaState(t, AppDev)
 	forceStop(t, AppDev)
 	startMainActivity(t, AppDev)
+	// Clear logcat + wait on "self-destruct mode enabled" instead of the
+	// earlier "agent attached" signal. The attach line fires before the
+	// reflective interceptor injection finishes, so a maestro tap that
+	// races right after can hit OkHttp before the RulesInterceptor is in
+	// the chain — producing the original 200 instead of the rewritten 418.
+	clearLogcat(t)
 
 	runForja(t, "rules", "add", "before-off",
 		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 	)
-	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
+	waitForLogcat(t, "self-destruct mode enabled", 30*time.Second, "ForjaAgent")
 	maestroFlow(t, "tap_singleton_assert_418.yaml")
 
 	runForja(t, "off", "--app", AppDev)

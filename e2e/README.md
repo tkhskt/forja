@@ -24,20 +24,24 @@ behaves when multiple debuggable apps coexist.
 
 ## Run
 
+Always go through the wrapper. It forces `-count=1` so Go's test cache never
+short-circuits a real device run (a cached "PASS" from yesterday tells you
+nothing about today's emulator state):
+
 ```bash
-cd e2e
-go test -tags e2e -v ./...
+./e2e/scripts/run.sh
 ```
 
 If an emulator is already running the suite runs in **borrow mode**
 (`setup_emulator.sh` reuses the existing connection). Otherwise it creates
 and boots an AVD (~3–5 minutes the first time).
 
-### Useful flags
+The wrapper forwards every argument to `go test`, so common patterns stay
+short:
 
 ```bash
 # Keep the emulator alive after the run (useful for debugging)
-FORJA_E2E_KEEP=1 go test -tags e2e -v ./...
+FORJA_E2E_KEEP=1 ./e2e/scripts/run.sh
 
 # Override AVD name / API level / ABI / image tag (e.g. to point at an
 # already-installed system-image)
@@ -45,11 +49,20 @@ FORJA_E2E_AVD=my-avd \
 FORJA_E2E_API=34 \
 FORJA_E2E_ABI=arm64-v8a \
 FORJA_E2E_TAG=google_apis_playstore \
-go test -tags e2e -v ./...
+./e2e/scripts/run.sh
 
 # Run a single test
-go test -tags e2e -v -run TestCoreBasicRewrite ./...
+./e2e/scripts/run.sh -run TestCoreBasicRewrite
 ```
+
+### Why not just `go test`?
+
+`go test` caches results when source files don't change. That's correct for
+pure unit tests but wrong for e2e — a cached PASS hides a real regression
+when (say) the emulator OS was updated or an APK got reinstalled in between
+runs. The wrapper passes `-count=1` to bypass the cache; using it
+unconditionally avoids "I'm sure I ran the suite, why did CI catch this?"
+moments.
 
 ## Suite layout
 
