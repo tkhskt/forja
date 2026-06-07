@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 
 	"gopkg.in/yaml.v3"
@@ -92,11 +91,9 @@ func LoadAliases(path string) (Aliases, error) {
 }
 
 // SaveAliases writes the alias map to disk in the wrapped `aliases:` form.
-// The file is created (and parent dirs are made) if missing.
+// The parent directory must already exist — see the Save() comment in io.go
+// for the directory-creation contract.
 func SaveAliases(path string, a Aliases) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
-	}
 	if a == nil {
 		a = Aliases{}
 	}

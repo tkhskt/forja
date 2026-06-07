@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -25,7 +28,7 @@ type rulesFlags struct {
 	body     string
 	bodyFile string
 	headers  []string
-	project  bool // --project = target project scope (forja/rules.yml). default = local.
+	local    bool // --local = target personal scope (forja/rules.local.yml). default = project (forja/rules.yml).
 }
 
 func bindRulesFlags(cmd *cobra.Command, f *rulesFlags) {
@@ -44,8 +47,8 @@ func bindRulesFlags(cmd *cobra.Command, f *rulesFlags) {
 		"rewrite: response header override as KEY=VALUE. Repeatable. The Content-Type entry "+
 			"also drives the body's MIME type on the device (default application/json). "+
 			"On update, passing --header replaces the entire header map; pass --header '' to clear.")
-	cmd.Flags().BoolVar(&f.project, "project", false,
-		"target the project (shared) rules file (forja/rules.yml). Default is local scope (forja/rules.local.yml).")
+	cmd.Flags().BoolVar(&f.local, "local", false,
+		"target the local (personal) rules file (forja/rules.local.yml). Default is project scope (forja/rules.yml) — the team-shared catalog.")
 }
 
 // rulesPaths resolves the Paths struct from the defaults. Paths are not
@@ -55,12 +58,14 @@ func rulesPaths() rules.Paths {
 	return rules.DefaultPaths()
 }
 
-// scopeFrom turns the --project flag into a rules.Scope (default = local).
+// scopeFrom turns the --local flag into a rules.Scope. Default is project
+// scope (the team-shared rules.yml) so the default workflow stays one file;
+// --local opts into the personal override file (rules.local.yml).
 func scopeFrom(f *rulesFlags) rules.Scope {
-	if f.project {
-		return rules.ScopeProject
+	if f.local {
+		return rules.ScopeLocal
 	}
-	return rules.ScopeLocal
+	return rules.ScopeProject
 }
 
 // resolveApp expands an alias name to its full Android applicationId, returning
@@ -92,8 +97,12 @@ state to the chosen app and exit.
   forja rules --app com.example.app interactive: skip picker, edit toggles for that app
   forja rules add NAME ...          append a rule to the catalog (yml only)
   forja rules update NAME ...       patch an existing rule (auto-applied to enabled apps)
-  forja rules remove NAME           delete a rule (auto-applied to enabled apps)`,
+  forja rules remove NAME           delete a rule (auto-applied to enabled apps)
+  forja rules list                  print the catalog (no device side effects)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireForjaDir(); err != nil {
+				return err
+			}
 			return runRulesTUI(app)
 		},
 	}
@@ -101,7 +110,179 @@ state to the chosen app and exit.
 	c.AddCommand(newRulesAddCmd())
 	c.AddCommand(newRulesUpdateCmd())
 	c.AddCommand(newRulesRemoveCmd())
+	c.AddCommand(newRulesListCmd())
 	return c
+}
+
+func newRulesListCmd() *cobra.Command {
+	var app string
+	c := &cobra.Command{
+		Use:   "list",
+		Short: "List rules in the catalog (yml only — does not touch any device)",
+		Long: `List the merged rule catalog from forja/rules.yml (project) and
+forja/rules.local.yml (local). Project rules shadowed by a local rule of
+the same name are hidden — the listing mirrors the on-device effective set,
+in the same order the OkHttp interceptor would scan them (local rules first,
+then project rules).
+
+With --app, each rule line is prefixed with [on] / [off] to show whether
+it's currently enabled for that app per forja/status.json. Without --app,
+only catalog data is shown.
+
+  forja rules list
+  forja rules list --app dev
+  forja rules list --app com.example.app`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireForjaDir(); err != nil {
+				return err
+			}
+			paths := rulesPaths()
+			if app != "" {
+				resolved, err := resolveApp(app)
+				if err != nil {
+					return err
+				}
+				app = resolved
+			}
+			eff, err := rules.LoadEffective(paths, app)
+			if err != nil {
+				return err
+			}
+			return printRulesList(os.Stdout, eff, app)
+		},
+	}
+	c.Flags().StringVar(&app, "app", "", "show per-rule enabled state for the given app or alias")
+	return c
+}
+
+// printRulesList renders the effective rule list grouped by scope. When app
+// is non-empty, each rule is prefixed with [on]/[off] indicating its status
+// for that app. The output is purely informational — no device side effects.
+func printRulesList(w io.Writer, eff []config.EffectiveRule, app string) error {
+	if len(eff) == 0 {
+		fmt.Fprintln(w, "(no rules — add some with `forja rules add NAME ...`)")
+		return nil
+	}
+
+	showEnabled := app != ""
+	byScope := map[string][]config.EffectiveRule{}
+	for _, r := range eff {
+		byScope[r.Scope] = append(byScope[r.Scope], r)
+	}
+
+	// Print local first since on-device match order is local-then-project.
+	first := true
+	for _, scope := range []string{config.ScopeLocal, config.ScopeProject} {
+		rs := byScope[scope]
+		if len(rs) == 0 {
+			continue
+		}
+		if !first {
+			fmt.Fprintln(w)
+		}
+		first = false
+		fmt.Fprintf(w, "%s:\n", scope)
+		for _, r := range rs {
+			fmt.Fprintf(w, "  %s\n", formatRuleLine(r, showEnabled))
+		}
+	}
+
+	if showEnabled {
+		fmt.Fprintf(w, "\ntarget: %s\n", app)
+	}
+	return nil
+}
+
+// formatRuleLine builds a single-line summary of one rule. The match and
+// response fields are joined with single spaces and only non-zero ones appear,
+// so a rule that only sets a status renders as `name  status=418` rather than
+// padding empty slots.
+func formatRuleLine(r config.EffectiveRule, showEnabled bool) string {
+	var sb strings.Builder
+	if showEnabled {
+		if r.Enabled {
+			sb.WriteString("[on]  ")
+		} else {
+			sb.WriteString("[off] ")
+		}
+	} else {
+		sb.WriteString("- ")
+	}
+	sb.WriteString(r.Name)
+
+	fields := []string{}
+	if r.Match.Host != "" {
+		fields = append(fields, "host="+r.Match.Host)
+	}
+	if r.Match.Path != "" {
+		fields = append(fields, "path="+r.Match.Path)
+	}
+	if r.Response.Status != 0 {
+		fields = append(fields, "status="+strconv.Itoa(r.Response.Status))
+	}
+	if r.Response.Body != nil {
+		// Object form only ever appears in-memory (it gets serialized to a
+		// JSON-encoded scalar on yml round-trip), but if a fresh in-process
+		// rule is being inspected, show the JSON so the preview is still
+		// useful instead of an opaque "object" label.
+		if r.Response.Body.Object != nil {
+			if b, err := json.Marshal(r.Response.Body.Object); err == nil {
+				fields = append(fields, "body="+formatBodyPreview(string(b)))
+			} else {
+				fields = append(fields, "body=object")
+			}
+		} else {
+			fields = append(fields, "body="+formatBodyPreview(r.Response.Body.String))
+		}
+	}
+	if r.Response.BodyFile != "" {
+		fields = append(fields, "bodyFile="+r.Response.BodyFile)
+	}
+	if n := len(r.Response.Headers); n > 0 {
+		fields = append(fields, fmt.Sprintf("headers=%d", n))
+	}
+
+	if len(fields) > 0 {
+		sb.WriteString("  ")
+		sb.WriteString(strings.Join(fields, " "))
+	}
+	return sb.String()
+}
+
+// bodyPreviewMaxRunes is the soft cap on the body preview length. Picked so a
+// typical rule fits on an 80-column terminal even when host / path / status /
+// headers are all set.
+const bodyPreviewMaxRunes = 30
+
+// formatBodyPreview renders a body string in a way that's legible at a
+// glance — single-quoted so JSON / HTML payloads don't drown in escaped
+// double quotes, with `\n` / `\r` / `\t` shown as backslash escapes so the
+// output stays on one line. Long bodies are truncated by rune (so multi-byte
+// characters never get sliced in half) with a `... (N chars)` suffix.
+func formatBodyPreview(s string) string {
+	const ellipsis = "..."
+	if s == "" {
+		return "''"
+	}
+	runes := []rune(s)
+	truncated := false
+	if len(runes) > bodyPreviewMaxRunes {
+		runes = runes[:bodyPreviewMaxRunes]
+		truncated = true
+	}
+	escaper := strings.NewReplacer(
+		`\`, `\\`,
+		`'`, `\'`,
+		"\n", `\n`,
+		"\r", `\r`,
+		"\t", `\t`,
+	)
+	out := "'" + escaper.Replace(string(runes)) + "'"
+	if truncated {
+		out += fmt.Sprintf(" %s (%d chars)", ellipsis, utf8.RuneCountInString(s))
+	}
+	return out
 }
 
 func newRulesAddCmd() *cobra.Command {
@@ -109,9 +290,9 @@ func newRulesAddCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "add NAME",
 		Short: "Append a rule to the catalog (yml only — does not touch any device)",
-		Long: `Append a new rule to forja/rules.local.yml (local scope; you should
-gitignore this file) — or to forja/rules.yml (project scope, committed) when
---project is passed.
+		Long: `Append a new rule to forja/rules.yml (project scope, committed) by
+default — pass --local to append to forja/rules.local.yml (your personal
+gitignored override file) instead.
 
 The newly added rule is NOT applied to any app. To turn it on, run
 'forja rules' (TUI) or 'forja apply --app X --enable NAME'.
@@ -120,6 +301,9 @@ The newly added rule is NOT applied to any app. To turn it on, run
   forja apply --app com.tkhskt.forja.sample --enable teapot`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireForjaDir(); err != nil {
+				return err
+			}
 			if cmd.Flags().Changed("body") && cmd.Flags().Changed("body-file") {
 				return errors.New("--body and --body-file are mutually exclusive")
 			}
@@ -171,12 +355,16 @@ every app where this rule is currently enabled. Pass --no-sync to skip
 the auto-push (yml is still updated).
 
 By default the rule is searched across both scopes (local-wins on shadows).
-Use --project to force the project file even when a local-scope shadow exists.
+Use --local to force the local file even when a project-scope rule of the
+same name exists.
 
   forja rules update teapot --status 503    # patch + auto-push to every app where teapot is on
   forja rules update teapot --no-sync       # patch yml only`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireForjaDir(); err != nil {
+				return err
+			}
 			if cmd.Flags().Changed("body") && cmd.Flags().Changed("body-file") {
 				return errors.New("--body and --body-file are mutually exclusive")
 			}
@@ -213,8 +401,8 @@ Use --project to force the project file even when a local-scope shadow exists.
 			}
 			paths := rulesPaths()
 			var scopePtr *rules.Scope
-			if f.project {
-				s := rules.ScopeProject
+			if f.local {
+				s := rules.ScopeLocal
 				scopePtr = &s
 			}
 			if err := rules.Update(paths, args[0], scopePtr, opts); err != nil {
@@ -233,24 +421,27 @@ Use --project to force the project file even when a local-scope shadow exists.
 }
 
 func newRulesRemoveCmd() *cobra.Command {
-	var project bool
+	var local bool
 	var noSync bool
 	c := &cobra.Command{
 		Use:   "remove NAME",
 		Short: "Delete a rule (auto-pushes the new set to every app where it was enabled)",
 		Long: `Delete a rule. Searches across both scopes (local-wins on shadows). Use
---project to force removal from the project file when a local-scope shadow
-exists.
+--local to force removal from the local file when a project-scope rule of
+the same name also exists.
 
 After the yml edit, forja iterates status.json and re-pushes the rule set
 (now without the deleted rule) to every app where it was enabled, then
 clears the rule name from every app's enabled list.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireForjaDir(); err != nil {
+				return err
+			}
 			paths := rulesPaths()
 			var scopePtr *rules.Scope
-			if project {
-				s := rules.ScopeProject
+			if local {
+				s := rules.ScopeLocal
 				scopePtr = &s
 			}
 			// Snapshot the apps that had this rule enabled BEFORE Remove drops
@@ -270,8 +461,8 @@ clears the rule name from every app's enabled list.`,
 			return pushToApps(apps, "remove")
 		},
 	}
-	c.Flags().BoolVar(&project, "project", false,
-		"force removal from the project file even when a local-scope shadow exists")
+	c.Flags().BoolVar(&local, "local", false,
+		"force removal from the local file even when a project-scope rule of the same name exists")
 	c.Flags().BoolVar(&noSync, "no-sync", false, "don't auto-push after deleting the yml entry")
 	return c
 }
@@ -507,6 +698,9 @@ func parseHeaders(entries []string) (map[string]string, error) {
 		if err := validateHeaderName(k); err != nil {
 			return nil, fmt.Errorf("--header %q: %w", e, err)
 		}
+		if err := validateHeaderValue(v); err != nil {
+			return nil, fmt.Errorf("--header %q: %w", e, err)
+		}
 		out[k] = v
 	}
 	return out, nil
@@ -522,6 +716,24 @@ func validateHeaderName(k string) error {
 	for _, r := range k {
 		if r <= 0x20 || r == 0x7F || r == ':' {
 			return fmt.Errorf("header KEY contains invalid character %q (U+%04X)", r, r)
+		}
+	}
+	return nil
+}
+
+// validateHeaderValue rejects header values that would either:
+//   - allow HTTP response splitting via embedded CR/LF, or
+//   - get rejected by OkHttp's Headers.checkValue on the device (which would
+//     surface as a confusing runtime exception in logcat rather than an early
+//     CLI error).
+//
+// We only reject the unambiguously-dangerous bytes (CR, LF, NUL) — anything
+// else, including tab (HTAB) and the full UTF-8 range, is passed through so
+// users can encode the same values OkHttp itself would accept.
+func validateHeaderValue(v string) error {
+	for _, r := range v {
+		if r == '\r' || r == '\n' || r == 0 {
+			return fmt.Errorf("header VALUE contains forbidden control character U+%04X", r)
 		}
 	}
 	return nil

@@ -22,6 +22,9 @@ func TestLoadAliasesMissingReturnsEmpty(t *testing.T) {
 
 func TestSaveLoadAliasesRoundTrip(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(dir, "sub", "aliases.local.yml")
 	orig := Aliases{
 		"dev":     "com.tkhskt.forja.sample",

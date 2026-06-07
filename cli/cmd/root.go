@@ -39,7 +39,8 @@ func NewRoot() *cobra.Command {
 		Long: `forja injects a JVMTI agent into a debuggable Android process and
 rewrites OkHttp responses according to rules defined under ./forja/.
 
-The rules are split across three files for shareability:
+Run 'forja init' once at the project root to set the directory up. The rule
+catalog is split across two scopes for shareability:
 
   forja/rules.yml         - project scope, committed, shared by the team
   forja/rules.local.yml   - local scope, personal additions (gitignore it)
@@ -56,6 +57,7 @@ across app process restarts.`,
 			"XDG_DATA_HOME/forja/agent, ~/.local/share/forja/agent, "+
 			"/usr/local/share/forja/agent, or ./jvmti-agent/build/outputs/agent)")
 
+	root.AddCommand(newInitCmd())
 	root.AddCommand(newRulesCmd())
 	root.AddCommand(newApplyCmd())
 	root.AddCommand(newSyncCmd())

@@ -47,6 +47,16 @@ forja --version
 forja --help
 ```
 
+Then run `forja init` at the root of the project you want to use forja in (one time per project):
+
+```bash
+cd path/to/your/project
+forja init    # creates ./forja/rules.yml with a schema-commented template
+              # and prints the recommended .gitignore entries (does not edit .gitignore)
+```
+
+forja refuses to do anything before `init` has run, to keep an accidental `forja rules add` in the wrong directory from silently materializing an orphan `forja/` somewhere unexpected.
+
 ---
 
 ## Windows

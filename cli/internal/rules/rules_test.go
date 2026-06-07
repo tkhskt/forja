@@ -2,6 +2,7 @@ package rules
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -11,15 +12,22 @@ import (
 )
 
 // pathsIn returns a Paths struct rooted under a fresh tempdir, mirroring the
-// production forja/ layout.
+// production forja/ layout. The forja/ subdirectory is created up front to
+// match the post-`forja init` state — production Save/SaveStatus/SaveAliases
+// no longer mkdir on demand (the cmd-layer requireForjaDir preflight is the
+// authoritative gate for directory existence).
 func pathsIn(t *testing.T) Paths {
 	t.Helper()
 	dir := t.TempDir()
+	forjaDir := filepath.Join(dir, "forja")
+	if err := os.MkdirAll(forjaDir, 0o755); err != nil {
+		t.Fatalf("setup forja dir: %v", err)
+	}
 	return Paths{
-		Project: filepath.Join(dir, "forja", "rules.yml"),
-		Local:   filepath.Join(dir, "forja", "rules.local.yml"),
-		Status:  filepath.Join(dir, "forja", "status.json"),
-		Aliases: filepath.Join(dir, "forja", "aliases.local.yml"),
+		Project: filepath.Join(forjaDir, "rules.yml"),
+		Local:   filepath.Join(forjaDir, "rules.local.yml"),
+		Status:  filepath.Join(forjaDir, "status.json"),
+		Aliases: filepath.Join(forjaDir, "aliases.local.yml"),
 	}
 }
 

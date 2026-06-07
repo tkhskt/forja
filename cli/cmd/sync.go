@@ -40,6 +40,9 @@ Examples:
 sync NEVER writes status.json — it only reads. To flip which rules are
 enabled use 'forja apply'; to clear an app use 'forja off'.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireForjaDir(); err != nil {
+				return err
+			}
 			paths := rulesPaths()
 			st, err := rules.LoadStatus(paths)
 			if err != nil {

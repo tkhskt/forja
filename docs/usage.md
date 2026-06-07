@@ -11,6 +11,24 @@ forja treats the current working directory as a single "project". The yml file i
 
 The yml file holds no information about which app a rule targets, so the same rule can be reused across multiple apps (dev/staging variants, multiple apps in a monorepo, etc.).
 
+forja never creates the `forja/` directory on its own — `forja init` is the one-time setup step. Every other command refuses to run if `forja/` is missing from the current cwd, so accidentally invoking forja from the wrong directory can't silently spawn an orphan `forja/` somewhere unexpected.
+
+---
+
+## One-time setup: `forja init`
+
+Run once at the project root before any other command.
+
+```bash
+forja init
+```
+
+The command:
+- creates `forja/` and seeds `forja/rules.yml` with a schema-commented template,
+- prints the recommended `.gitignore` entries so you can add them by hand (init does not edit `.gitignore` itself — VCS hygiene is your call, matching the convention of ESLint / Prettier / terraform / tsc).
+
+`init` refuses to overwrite an existing `forja/rules.yml` so a populated catalog can never be silently wiped by a stray re-run. Re-init in a fresh checkout is safe.
+
 ---
 
 ## Workflow examples
@@ -22,7 +40,9 @@ forja rules add slow-bar --host example.com --path /bar --status 503
 forja apply --app com.tkhskt.sample_app --enable slow-bar
 ```
 
-`rules add` only writes to `forja/rules.local.yml`. `apply` is what actually flips `status.json` and pushes the new effective ruleset to the device.
+`rules add` writes to `forja/rules.yml` (the project / committed catalog) by default. Pass `--local` to write to `forja/rules.local.yml` instead — that file is meant to be gitignored, for personal overrides on top of the team-shared catalog.
+
+`apply` is what actually flips `status.json` and pushes the new effective ruleset to the device.
 
 ### 2. Iterate
 
@@ -65,9 +85,11 @@ Turns off every rewrite on the named app, so the app sees the original (real) re
 
 | Command | Behavior |
 |---|---|
+| `forja init` | One-time setup: create `forja/rules.yml` with a schema-commented template, and print the recommended `.gitignore` entries (does not edit `.gitignore` itself) |
 | `forja rules add NAME [flags]` | Append a rule to the yml catalog. Does NOT push to any device — use `forja apply` or the TUI next |
 | `forja rules update NAME [flags]` | Patch the yml + **auto-push to every app where the rule is enabled**. `--no-sync` suppresses the push |
 | `forja rules remove NAME` | Delete from yml + **auto-push to every app where it was enabled** + drop the entry from every app in `status.json`. `--no-sync` suppresses the push |
+| `forja rules list [--app X]` | Print the catalog (no device side effects). With `--app`, each row is prefixed `[on]` / `[off]` per `status.json` |
 | `forja apply --app X --enable a,b [--disable c]` | Patch `status.json[X]` and push (one of `--enable`/`--disable` is required) |
 | `forja sync [--app X]` | **Read-only on `status.json`.** Re-push the current effective rule set to every app with a status entry (or just X). Use this after hand-editing the yml to make the change visible on the device |
 | `forja rules` | TUI: (1) list debuggable apps on the device → (2) pick one → (3) show the rule list with per-app toggles → q to push |
@@ -105,7 +127,8 @@ CLI flags stay flat; forja distributes them into the yml's `match:` / `response:
              Content-Type also drives the body's MIME type on the device
              (default application/json; charset=utf-8). On `update`, passing
              --header replaces the entire header map; pass --header '' to clear
---project    target the project scope (default is local)
+--local      target the local (personal, gitignored) rules file (forja/rules.local.yml).
+             Default is project scope (forja/rules.yml — the team-shared catalog)
 --no-sync    (update / remove only) suppress the auto-push
 ```
 
@@ -146,9 +169,9 @@ When the same rule name appears in both project and local scopes (= shadow):
 
 - **The local copy wins**
 - The TUI shows only the local copy (the project copy is hidden)
-- `forja rules update NAME` patches the local copy
-- `forja rules update NAME --project` explicitly targets the project copy
-- `forja rules remove NAME --project` deletes only the project copy (= the local shadow becomes visible)
+- `forja rules update NAME` patches the local copy (search is local-first)
+- `forja rules update NAME --local` forces the local file even when a project-scope rule of the same name exists
+- `forja rules remove NAME --local` deletes only the local copy (= the project entry becomes visible again)
 
 ---
 
@@ -212,6 +235,8 @@ Both `match:` and `response:` are optional. A rule with only `response:` matches
 So `big-response` above reads `forja/responses/heavy.json`. Handy when you don't want a large JSON blob or HTML template inlined in the yml.
 
 `response.headers` is an **optional map of header overrides** applied on top of the matched response. The `Content-Type` entry also drives the response body's MIME type on the device — by default the runtime returns `application/json; charset=utf-8`, so set `Content-Type` explicitly when returning HTML / plain text / XML / SVG / etc.
+
+> **Header overrides are per-key, not wholesale.** Only the header names you list under `headers:` are replaced on the matched response; every other original header (`Date`, `Server`, `Cache-Control`, ...) passes through untouched. This matches the modify-existing-response model of Charles / mitmproxy. There is no current opt-in for "drop everything and use only my headers".
 
 ### Fields
 

@@ -168,7 +168,7 @@ func Add(paths Paths, scope Scope, opts AddOptions) error {
 	}
 
 	// Disallow same-name duplicates within the SAME scope. Cross-scope
-	// (project ↔ user) shadowing is intentionally allowed (override pattern).
+	// (project ↔ local) shadowing is intentionally allowed (override pattern).
 	if rf.FindRule(opts.Name) != nil {
 		return fmt.Errorf("rule %q already exists in %s scope", opts.Name, scope)
 	}
@@ -193,9 +193,9 @@ func Add(paths Paths, scope Scope, opts AddOptions) error {
 }
 
 // findRule looks the named rule up across both scopes. Returns the scope it
-// was found in. User scope wins on collision (= override semantics).
+// was found in. Local scope wins on collision (= override semantics).
 func findRule(paths Paths, name string) (Scope, error) {
-	if u, err := config.Load(paths.Local); err == nil && u != nil && u.FindRule(name) != nil {
+	if l, err := config.Load(paths.Local); err == nil && l != nil && l.FindRule(name) != nil {
 		return ScopeLocal, nil
 	}
 	if p, err := config.Load(paths.Project); err == nil && p != nil && p.FindRule(name) != nil {
@@ -409,7 +409,7 @@ func LoadEffective(paths Paths, app string) ([]config.EffectiveRule, error) {
 	if err != nil {
 		return nil, err
 	}
-	user, err := config.Load(paths.Local)
+	local, err := config.Load(paths.Local)
 	if err != nil {
 		return nil, err
 	}
@@ -419,7 +419,7 @@ func LoadEffective(paths Paths, app string) ([]config.EffectiveRule, error) {
 	}
 	projectDir := filepath.Dir(paths.Project)
 	localDir := filepath.Dir(paths.Local)
-	return config.Effective(proj, projectDir, user, localDir, st, app), nil
+	return config.Effective(proj, projectDir, local, localDir, st, app), nil
 }
 
 // LoadStatus returns the current status (loading from disk). Convenience for
@@ -428,7 +428,7 @@ func LoadStatus(paths Paths) (config.Status, error) {
 	return config.LoadStatus(paths.Status)
 }
 
-// loadKnownNames returns the union of all rule names across project + user yml.
+// loadKnownNames returns the union of all rule names across project + local yml.
 // Used by Enable to typo-check before mutating status.json.
 func loadKnownNames(paths Paths) (map[string]struct{}, error) {
 	known := map[string]struct{}{}

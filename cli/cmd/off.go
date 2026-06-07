@@ -22,6 +22,9 @@ you want to re-engage on this app.
 
 Only the named app is affected; other apps' state stays intact.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireForjaDir(); err != nil {
+				return err
+			}
 			if app == "" {
 				return errors.New("--app is required")
 			}

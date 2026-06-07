@@ -1,6 +1,13 @@
 package cmd
 
-import "testing"
+import (
+	"bytes"
+	"strings"
+	"testing"
+	"unicode/utf8"
+
+	"github.com/tkhskt/forja/internal/config"
+)
 
 // TestParseBodyExplicitEmpty: an empty --body value is the explicit
 // "force empty body" case. The caller (newRulesAddCmd / newRulesUpdateCmd)
@@ -116,5 +123,225 @@ func TestParseHeadersRejectsInvalidKeyChars(t *testing.T) {
 		if _, err := parseHeaders([]string{in}); err == nil {
 			t.Errorf("expected error for %q, got nil", in)
 		}
+	}
+}
+
+// TestParseHeadersRejectsCRLFInValue: catching CR/LF in the value at the CLI
+// boundary protects against accidental response-splitting and short-circuits
+// the more confusing runtime error OkHttp would otherwise throw on the device.
+func TestParseHeadersRejectsCRLFInValue(t *testing.T) {
+	cases := []string{
+		"X-Foo=line1\nline2", // LF
+		"X-Foo=line1\rline2", // CR
+		"X-Foo=null\x00byte", // NUL
+	}
+	for _, in := range cases {
+		if _, err := parseHeaders([]string{in}); err == nil {
+			t.Errorf("expected error for %q, got nil", in)
+		}
+	}
+}
+
+// TestParseHeadersAcceptsBenignControlCharsInValue: tab and high-bit / UTF-8
+// content must NOT be rejected — OkHttp's checkValue accepts them and forja
+// shouldn't be stricter than the runtime that has to ingest the value.
+func TestParseHeadersAcceptsBenignControlCharsInValue(t *testing.T) {
+	cases := []string{
+		"X-Foo=tab\there",     // HTAB is allowed in field-content per RFC 7230
+		"X-Foo=日本語",         // UTF-8 (technically out of spec but commonly accepted)
+		"X-Foo=spaces  here",  // multiple spaces
+	}
+	for _, in := range cases {
+		if _, err := parseHeaders([]string{in}); err != nil {
+			t.Errorf("expected accept for %q, got error: %v", in, err)
+		}
+	}
+}
+
+// ---- rules list -----------------------------------------------------
+
+// TestPrintRulesListEmpty: empty catalog prints a helpful onboarding hint
+// rather than a blank line, so users can't get stuck thinking the command
+// silently no-op'd.
+func TestPrintRulesListEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	if err := printRulesList(&buf, nil, ""); err != nil {
+		t.Fatalf("printRulesList: %v", err)
+	}
+	if !strings.Contains(buf.String(), "no rules") {
+		t.Errorf("empty list should hint at add command; got %q", buf.String())
+	}
+}
+
+// TestPrintRulesListGroupsByScope: local then project, each under its own
+// header, in the order they would be tried by the on-device interceptor.
+func TestPrintRulesListGroupsByScope(t *testing.T) {
+	eff := []config.EffectiveRule{
+		{Rule: config.Rule{Name: "local-only", Match: config.Match{Host: "example.com"}, Response: config.Response{Status: 500}}, Scope: config.ScopeLocal},
+		{Rule: config.Rule{Name: "project-only", Match: config.Match{Host: "example.com", Path: "/p"}, Response: config.Response{Status: 418}}, Scope: config.ScopeProject},
+	}
+	var buf bytes.Buffer
+	if err := printRulesList(&buf, eff, ""); err != nil {
+		t.Fatalf("printRulesList: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "local:\n") {
+		t.Errorf("missing local section header: %s", out)
+	}
+	if !strings.Contains(out, "project:\n") {
+		t.Errorf("missing project section header: %s", out)
+	}
+	// Local must appear before project in the output (= match-scan order).
+	if strings.Index(out, "local:") > strings.Index(out, "project:") {
+		t.Errorf("local section must precede project; got:\n%s", out)
+	}
+	if !strings.Contains(out, "local-only") || !strings.Contains(out, "project-only") {
+		t.Errorf("rule names missing: %s", out)
+	}
+}
+
+// TestPrintRulesListShowEnabledColumn: passing a non-empty app argument
+// switches the per-line prefix from a bullet `- ` to a `[on ]` / `[off]`
+// marker so users can see which rules are active for the chosen app.
+func TestPrintRulesListShowEnabledColumn(t *testing.T) {
+	eff := []config.EffectiveRule{
+		{Rule: config.Rule{Name: "a", Enabled: true, Response: config.Response{Status: 200}}, Scope: config.ScopeLocal},
+		{Rule: config.Rule{Name: "b", Enabled: false, Response: config.Response{Status: 500}}, Scope: config.ScopeLocal},
+	}
+	var buf bytes.Buffer
+	if err := printRulesList(&buf, eff, "com.example.app"); err != nil {
+		t.Fatalf("printRulesList: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "[on]  a") {
+		t.Errorf("expected [on] prefix on rule 'a': %s", out)
+	}
+	if !strings.Contains(out, "[off] b") {
+		t.Errorf("expected [off] prefix on rule 'b': %s", out)
+	}
+	if !strings.Contains(out, "target: com.example.app") {
+		t.Errorf("footer should name the target app: %s", out)
+	}
+}
+
+// TestFormatRuleLineFieldRendering: each non-zero field appears, zero fields
+// stay hidden, and body presentation shows the actual content (truncated)
+// rather than an opaque length so users can spot the right rule visually.
+func TestFormatRuleLineFieldRendering(t *testing.T) {
+	cases := []struct {
+		name    string
+		rule    config.EffectiveRule
+		want    []string
+		notWant []string
+	}{
+		{
+			name: "host-only rule shows host and nothing else",
+			rule: config.EffectiveRule{
+				Rule: config.Rule{Name: "x", Match: config.Match{Host: "example.com"}},
+			},
+			want:    []string{"x", "host=example.com"},
+			notWant: []string{"path=", "status=", "body="},
+		},
+		{
+			name: "json object body renders as the JSON itself (in-memory form)",
+			rule: config.EffectiveRule{
+				Rule: config.Rule{Name: "x", Response: config.Response{
+					Body: &config.BodyValue{Object: map[string]any{"k": "v"}},
+				}},
+			},
+			want: []string{`body='{"k":"v"}'`},
+		},
+		{
+			name: "explicit empty body renders as body=''",
+			rule: config.EffectiveRule{
+				Rule: config.Rule{Name: "x", Response: config.Response{
+					Body: &config.BodyValue{String: ""},
+				}},
+			},
+			want: []string{"body=''"},
+		},
+		{
+			name: "short string body renders inline in single quotes",
+			rule: config.EffectiveRule{
+				Rule: config.Rule{Name: "x", Response: config.Response{
+					Body: &config.BodyValue{String: `{"message":"failure"}`},
+				}},
+			},
+			// 21-char JSON-shaped string, fits under the 30-rune truncation cap.
+			want:    []string{`body='{"message":"failure"}'`},
+			notWant: []string{"chars)", "..."},
+		},
+		{
+			name: "long body is truncated with rune count suffix",
+			rule: config.EffectiveRule{
+				Rule: config.Rule{Name: "x", Response: config.Response{
+					Body: &config.BodyValue{String: strings.Repeat("a", 200)},
+				}},
+			},
+			want: []string{"...", "(200 chars)"},
+		},
+		{
+			name: "control chars in body are escaped, line stays single-line",
+			rule: config.EffectiveRule{
+				Rule: config.Rule{Name: "x", Response: config.Response{
+					Body: &config.BodyValue{String: "line1\nline2"},
+				}},
+			},
+			want:    []string{`body='line1\nline2'`},
+			notWant: []string{"\n"}, // literal newline must not appear in output
+		},
+		{
+			name: "headers count appears when set",
+			rule: config.EffectiveRule{
+				Rule: config.Rule{Name: "x", Response: config.Response{
+					Headers: map[string]string{"Content-Type": "text/html", "X-A": "1"},
+				}},
+			},
+			want: []string{"headers=2"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatRuleLine(tc.rule, false)
+			for _, s := range tc.want {
+				if !strings.Contains(got, s) {
+					t.Errorf("want %q in output, got: %s", s, got)
+				}
+			}
+			for _, s := range tc.notWant {
+				if strings.Contains(got, s) {
+					t.Errorf("want %q absent, got: %s", s, got)
+				}
+			}
+		})
+	}
+}
+
+// TestFormatBodyPreviewTruncationBoundary: a body exactly at the cap stays
+// inline; one character over triggers the truncated form. Locks the off-by-
+// one behavior so refactors of bodyPreviewMaxRunes can't silently regress.
+func TestFormatBodyPreviewTruncationBoundary(t *testing.T) {
+	at := strings.Repeat("x", bodyPreviewMaxRunes)
+	over := strings.Repeat("x", bodyPreviewMaxRunes+1)
+	if got := formatBodyPreview(at); strings.Contains(got, "...") {
+		t.Errorf("body of exactly %d chars should not be truncated; got %s", bodyPreviewMaxRunes, got)
+	}
+	if got := formatBodyPreview(over); !strings.Contains(got, "...") {
+		t.Errorf("body of %d chars should be truncated; got %s", bodyPreviewMaxRunes+1, got)
+	}
+}
+
+// TestFormatBodyPreviewMultibyteSafe: truncation must split on rune
+// boundaries so multi-byte UTF-8 sequences never get sliced in half.
+func TestFormatBodyPreviewMultibyteSafe(t *testing.T) {
+	// 50 Japanese chars (each 3 bytes in UTF-8) → 150 bytes, 50 runes.
+	in := strings.Repeat("あ", 50)
+	got := formatBodyPreview(in)
+	if !strings.Contains(got, "(50 chars)") {
+		t.Errorf("rune count suffix wrong: %s", got)
+	}
+	// The preview should still be valid UTF-8 (no broken multi-byte sequences).
+	if !utf8.ValidString(got) {
+		t.Errorf("preview produced invalid UTF-8: %q", got)
 	}
 }

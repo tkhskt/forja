@@ -40,6 +40,9 @@ names to the app's enabled list, --disable to remove them.
 Unknown rule names in --enable cause an error (typo guard). Unknown names in
 --disable are silently no-op'd (so you can safely scrub stale entries).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireForjaDir(); err != nil {
+				return err
+			}
 			if app == "" {
 				return errors.New("--app is required")
 			}

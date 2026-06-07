@@ -275,8 +275,11 @@ func maestroFlow(t *testing.T, name string) string {
 
 // --- forja state helpers -----------------------------------------------
 
-// resetForjaState wipes ./forja/ in repo root and the attach cache for the
-// given apps. Call this at the start of each test for hermetic state.
+// resetForjaState wipes ./forja/ in repo root, removes the attach cache for
+// the given apps, then runs `forja init` to restore the canonical post-init
+// state. Production forja refuses to auto-create forja/ — calling init here
+// keeps every test starting from the same hermetic baseline (clean dir +
+// empty rules.yml) without each test having to remember the bootstrap step.
 func resetForjaState(t *testing.T, pkgs ...string) {
 	t.Helper()
 	_ = os.RemoveAll(filepath.Join(repoRoot, "forja"))
@@ -285,6 +288,7 @@ func resetForjaState(t *testing.T, pkgs ...string) {
 	for _, pkg := range pkgs {
 		_ = os.Remove(filepath.Join(cacheDir, pkg+".json"))
 	}
+	runForja(t, "init")
 }
 
 // StatusJSON mirrors the on-disk shape of forja/status.json: a flat top-level

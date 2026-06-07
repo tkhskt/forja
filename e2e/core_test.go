@@ -247,9 +247,9 @@ appId: com.tkhskt.forja.sample
 	// The yml on disk must hold body as an explicit empty string, not omitted
 	// — otherwise the next `forja sync` would push a no-body-override rule
 	// and silently let the upstream body flow through.
-	yml := readRulesYml(t, "rules.local.yml")
+	yml := readRulesYml(t, "rules.yml")
 	if !strings.Contains(yml, `body: ""`) {
-		t.Errorf("rules.local.yml should store body as an explicit empty string;\n--- got ---\n%s", yml)
+		t.Errorf("rules.yml should store body as an explicit empty string;\n--- got ---\n%s", yml)
 	}
 }
 
@@ -261,7 +261,7 @@ func TestCoreBodyFile(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	// Copy the fixture into the forja directory so its bodyFile path resolves
-	// relative to forja/rules.local.yml.
+	// relative to forja/rules.yml.
 	mkForjaResponsesDir(t, "teapot_response.json")
 
 	runForja(t, "rules", "add", "bodyfile-rule",

@@ -34,6 +34,9 @@ func newAliasSetCmd() *cobra.Command {
 		Short: "Map an alias to an applicationId (overwrites existing)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireForjaDir(); err != nil {
+				return err
+			}
 			name, app := args[0], args[1]
 			if name == "" || app == "" {
 				return errors.New("alias name and applicationId must be non-empty")
@@ -59,6 +62,9 @@ func newAliasRmCmd() *cobra.Command {
 		Short: "Delete an alias",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireForjaDir(); err != nil {
+				return err
+			}
 			paths := rulesPaths()
 			a, err := rules.LoadAliases(paths)
 			if err != nil {
@@ -82,6 +88,9 @@ func newAliasListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "Print all registered aliases",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireForjaDir(); err != nil {
+				return err
+			}
 			paths := rulesPaths()
 			a, err := rules.LoadAliases(paths)
 			if err != nil {

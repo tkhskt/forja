@@ -206,7 +206,7 @@ func (e *Engine) Push(ctx context.Context, app string, rf *config.RulesFile) err
 	return nil
 }
 
-// PushEffective is the project/user/status-aware variant of Push. It takes the
+// PushEffective is the project/local/status-aware variant of Push. It takes the
 // already-merged effective rule list from rules.LoadEffective rather than a
 // raw RulesFile, so the engine doesn't need to know about scopes.
 func (e *Engine) PushEffective(ctx context.Context, app string, eff []config.EffectiveRule) error {

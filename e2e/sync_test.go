@@ -93,14 +93,15 @@ func TestSyncOffStatusDisablesAllInJSON(t *testing.T) {
 	forceStop(t, AppDev)
 	startMainActivity(t, AppDev)
 
-	// All three rules added with --app so each is enabled on AppDev (sugar
-	// path). x is in user scope (default), z in project (via --project), y
-	// also user. After this, status.json[AppDev].enabled = [x, y, z].
+	// All three rules added then enabled on AppDev. x and y live in the
+	// project catalog (rules.yml — the default), z is added with --local so
+	// the off command's "yml files must not be touched" assertion exercises
+	// both files. After this, status.json[AppDev].enabled = [x, y, z].
 	runForja(t, "rules", "add", "x", "--host", "example.com", "--status", "418")
 	runForja(t, "apply", "--app", AppDev, "--enable", "x")
 	runForja(t, "rules", "add", "y", "--host", "example.com", "--path", "/x", "--status", "503")
 	runForja(t, "apply", "--app", AppDev, "--enable", "y")
-	runForja(t, "rules", "add", "z", "--project",
+	runForja(t, "rules", "add", "z", "--local",
 		"--host", "example.com", "--path", "/y", "--status", "401")
 	runForja(t, "apply", "--app", AppDev, "--enable", "z")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
@@ -112,9 +113,13 @@ func TestSyncOffStatusDisablesAllInJSON(t *testing.T) {
 			t.Errorf("after off: %q should be disabled on %s, got %+v", name, AppDev, st)
 		}
 	}
-	// yml files must not be touched.
-	if !strings.Contains(readRulesYml(t, "rules.local.yml"), "name: x") {
-		t.Errorf("yml lost rule x after off")
+	// yml files must not be touched — x lives in rules.yml (project default),
+	// z lives in rules.local.yml. Both should survive `forja off`.
+	if !strings.Contains(readRulesYml(t, "rules.yml"), "name: x") {
+		t.Errorf("rules.yml lost rule x after off")
+	}
+	if !strings.Contains(readRulesYml(t, "rules.local.yml"), "name: z") {
+		t.Errorf("rules.local.yml lost rule z after off")
 	}
 }
 
@@ -183,7 +188,7 @@ func TestSyncNoOpUpdateIsIdempotent(t *testing.T) {
 		t.Fatalf("empty update should succeed: %v\n%s", err, out)
 	}
 	// Yml should look the same as right after add (no enabled field, etc.).
-	yml := readRulesYml(t, "rules.local.yml")
+	yml := readRulesYml(t, "rules.yml")
 	if !strings.Contains(yml, "name: noop") || !strings.Contains(yml, "status: 418") {
 		t.Errorf("yml content changed unexpectedly after no-op update:\n%s", yml)
 	}
@@ -196,12 +201,14 @@ func TestSyncProjectAndUserBothPushed(t *testing.T) {
 	forceStop(t, AppDev)
 	startMainActivity(t, AppDev)
 
-	// team-rule lives in project yml (committed). Without --app it's a pure
-	// catalog entry — not yet pushed to any device.
-	runForja(t, "rules", "add", "team-rule", "--project",
+	// team-rule lives in project yml (committed) — the default scope. Without
+	// an `apply --enable` it's a pure catalog entry, not yet pushed to any
+	// device.
+	runForja(t, "rules", "add", "team-rule",
 		"--host", "team.example.com", "--status", "200")
-	// user-rule (user scope) added, then enabled on AppDev and pushed.
-	runForja(t, "rules", "add", "user-rule",
+	// user-rule lives in local yml (--local opt-in) so the test exercises
+	// project + local both being merged at push time.
+	runForja(t, "rules", "add", "user-rule", "--local",
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
@@ -216,7 +223,7 @@ func TestSyncProjectAndUserBothPushed(t *testing.T) {
 	waitForLogcat(t, "hit 'user-rule'", 10*time.Second, "Forja")
 }
 
-// TestSyncManualYmlEditTakesEffectOnNextCommand: a user edits forja/rules.local.yml
+// TestSyncManualYmlEditTakesEffectOnNextCommand: a user edits forja/rules.yml
 // in their editor (instead of `forja rules update`). Any subsequent CLI command
 // that touches the same scope re-reads the yml from disk and propagates the
 // manual change to the device — yml is the source of truth, the CLI is just
@@ -235,7 +242,7 @@ func TestSyncManualYmlEditTakesEffectOnNextCommand(t *testing.T) {
 	maestroFlow(t, "tap_singleton_assert_418.yaml")
 
 	// Hand-edit: swap status: 418 → 503 directly in the yml.
-	ymlPath := filepath.Join(repoRoot, "forja", "rules.local.yml")
+	ymlPath := filepath.Join(repoRoot, "forja", "rules.yml")
 	raw, err := os.ReadFile(ymlPath)
 	if err != nil {
 		t.Fatalf("read yml: %v", err)
@@ -280,20 +287,20 @@ func TestSyncManualYmlAddNewRuleIsPicked(t *testing.T) {
 	runForja(t, "apply", "--app", AppDev, "--enable", "stub")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 
-	// Append a fresh catalog entry to rules.local.yml by hand. Indentation
-	// matches what the writer emits (4-space list items under rules:).
-	ymlPath := filepath.Join(repoRoot, "forja", "rules.local.yml")
+	// Append a fresh catalog entry to rules.yml by hand. Indentation
+	// matches what the writer emits (2-space list items under rules:).
+	ymlPath := filepath.Join(repoRoot, "forja", "rules.yml")
 	raw, err := os.ReadFile(ymlPath)
 	if err != nil {
 		t.Fatalf("read yml: %v", err)
 	}
-	appended := string(raw) + `    - name: hand-added
-      match:
-        host: example.com
-        path: /
-      response:
-        status: 418
-        body: '{"by":"manual-yml"}'
+	appended := string(raw) + `  - name: hand-added
+    match:
+      host: example.com
+      path: /
+    response:
+      status: 418
+      body: '{"by":"manual-yml"}'
 `
 	if err := os.WriteFile(ymlPath, []byte(appended), 0o644); err != nil {
 		t.Fatalf("write yml: %v", err)
@@ -342,7 +349,7 @@ func TestSyncManualYmlRemoveRuleDropsFromDevice(t *testing.T) {
 	maestroFlow(t, "tap_singleton_assert_418.yaml")
 
 	// Strip the `doomed` entry from yml.
-	ymlPath := filepath.Join(repoRoot, "forja", "rules.local.yml")
+	ymlPath := filepath.Join(repoRoot, "forja", "rules.yml")
 	raw, err := os.ReadFile(ymlPath)
 	if err != nil {
 		t.Fatalf("read yml: %v", err)
@@ -391,9 +398,9 @@ func TestSyncOffPushesEmptyArray(t *testing.T) {
 // ============================================================================
 //
 // sync is the explicit "re-push the current effective state" entry point.
-// Use case: hand-edit forja/rules.local.yml, then run `forja sync` to make
-// the change visible on every app that already has the affected rule
-// enabled. sync NEVER writes status.json — only reads.
+// Use case: hand-edit forja/rules.yml, then run `forja sync` to make the
+// change visible on every app that already has the affected rule enabled.
+// sync NEVER writes status.json — only reads.
 
 // TestSyncCommandReflectsManualBodyEdit: hand-edit the body of an enabled
 // rule and verify that `forja sync` (with no args) propagates the change to
@@ -424,7 +431,7 @@ appId: com.tkhskt.forja.sample
 `)
 
 	// Hand-edit: replace the body JSON directly in the yml.
-	ymlPath := filepath.Join(repoRoot, "forja", "rules.local.yml")
+	ymlPath := filepath.Join(repoRoot, "forja", "rules.yml")
 	raw, err := os.ReadFile(ymlPath)
 	if err != nil {
 		t.Fatalf("read yml: %v", err)
@@ -491,7 +498,7 @@ func TestSyncCommandPkgFilterOnlyAffectsTarget(t *testing.T) {
 	}
 
 	// Hand-edit body, then sync ONLY AppDev.
-	ymlPath := filepath.Join(repoRoot, "forja", "rules.local.yml")
+	ymlPath := filepath.Join(repoRoot, "forja", "rules.yml")
 	raw, err := os.ReadFile(ymlPath)
 	if err != nil {
 		t.Fatalf("read yml: %v", err)

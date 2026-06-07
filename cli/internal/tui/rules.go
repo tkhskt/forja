@@ -100,17 +100,17 @@ func (m RulesModel) View() string {
 		return ""
 	}
 
-	projectCount, userCount := 0, 0
+	projectCount, localCount := 0, 0
 	for _, r := range m.rules {
 		if r.Scope == config.ScopeProject {
 			projectCount++
 		} else {
-			userCount++
+			localCount++
 		}
 	}
 	header := titleStyle.Render(fmt.Sprintf(
-		"forja rules — %s  (%d rules: %d project + %d user)",
-		m.app, len(m.rules), projectCount, userCount,
+		"forja rules — %s  (%d rules: %d project + %d local)",
+		m.app, len(m.rules), projectCount, localCount,
 	))
 	if m.dirty {
 		header += "  " + dirtyStyle.Render("(unsynced toggles)")

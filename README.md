@@ -41,11 +41,15 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ## Quick start
 
-Rule definitions and per-app on/off state live in a `forja/` directory that forja maintains in your current working directory.
+Rule definitions and per-app on/off state live in a `forja/` directory at the root of your project. forja never creates that directory on its own — `forja init` is the one-time setup step.
 
 ### Basic workflow
 
 ```bash
+# 0. One-time setup: create forja/ + forja/rules.yml with a schema-commented
+#    template. Add --gitignore to also append the recommended ignore entries.
+forja init
+
 # 1. Add a rule to the catalog (yml only — nothing reaches the device yet)
 forja rules add mock-failure \
     --host example.com --path /foo \
@@ -68,7 +72,7 @@ forja rules update mock-failure --status 502
 ### Hand-edit the yml, then sync to the device
 
 ```bash
-$EDITOR forja/rules.local.yml
+$EDITOR forja/rules.yml
 forja sync
 ```
 

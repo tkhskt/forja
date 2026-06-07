@@ -19,6 +19,43 @@ func TestLoadMissingReturnsNil(t *testing.T) {
 	}
 }
 
+// TestLoadCommentOnlyFileGivesEmptyRulesFile: `forja init` writes a comment-
+// only template (no `rules: []` placeholder), so Load + AddRule + Save must
+// work end-to-end against that shape. yaml.v3 should parse the file into a
+// zero-value RulesFile (Rules == nil), and a subsequent AddRule should
+// materialize the `rules:` key on save.
+func TestLoadCommentOnlyFileGivesEmptyRulesFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rules.yml")
+	if err := os.WriteFile(path, []byte("# forja rule catalog. Hand-editable.\n# (no rules yet)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rf, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load comment-only: %v", err)
+	}
+	if rf == nil {
+		t.Fatal("Load should return a non-nil RulesFile for a comment-only document")
+	}
+	if len(rf.Rules) != 0 {
+		t.Errorf("Rules should be empty, got %d entries", len(rf.Rules))
+	}
+	// Adding the first rule should succeed and round-trip through save.
+	if err := rf.AddRule(Rule{Name: "first", Response: Response{Status: 200}}); err != nil {
+		t.Fatalf("AddRule on freshly-init'd file: %v", err)
+	}
+	if err := Save(path, rf); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	back, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load back: %v", err)
+	}
+	if len(back.Rules) != 1 || back.Rules[0].Name != "first" {
+		t.Errorf("first rule did not round-trip cleanly: %+v", back.Rules)
+	}
+}
+
 func TestLoadParsesRules(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "rules.yml")
@@ -68,9 +105,50 @@ rules:
 	}
 }
 
+// TestSaveUsesUniform2SpaceIndent: yaml.v3's package-level Marshal defaults
+// to a 4-space indent at the top level and 2-space indents below, which
+// looks inconsistent when written out. The Save path routes through an
+// Encoder pinned to 2 so every indentation level lines up. This test locks
+// that contract so a future refactor doesn't accidentally regress to the
+// default by switching back to yaml.Marshal.
+func TestSaveUsesUniform2SpaceIndent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rules.yml")
+	rf := &RulesFile{Rules: []Rule{
+		{Name: "foo",
+			Match:    Match{Host: "example.com", Path: "/bar"},
+			Response: Response{Status: 500, Body: &BodyValue{String: "body-text"}}},
+	}}
+	if err := Save(path, rf); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	out := string(data)
+
+	// Top-level list item must be indented 2 spaces (not 4 — the yaml.v3
+	// default). This is the indent that visibly diverges from the rest when
+	// Marshal is used directly.
+	if !strings.Contains(out, "\n  - name: foo") {
+		t.Errorf("top-level list item should be 2-space-indented; got:\n%s", out)
+	}
+	// And the 4-space indent (the broken form) must NOT appear at the start
+	// of the list line.
+	if strings.Contains(out, "\n    - name: foo") {
+		t.Errorf("list item is 4-space-indented (regression to yaml.v3 default); got:\n%s", out)
+	}
+}
+
 func TestSaveLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "sub", "rules.yml") // exercise MkdirAll
+	// Save no longer mkdir's; the parent dir is the caller's contract.
+	// Pre-create here so the round-trip exercises the marshal/unmarshal path.
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "sub", "rules.yml")
 	orig := &RulesFile{
 		Rules: []Rule{
 			{Name: "a", Enabled: true,
@@ -103,6 +181,9 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 
 func TestStatusPerPkgRoundTrip(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(dir, "sub", "status.json")
 	orig := Status{
 		"com.a": {Enabled: []string{"foo", "bar"}},

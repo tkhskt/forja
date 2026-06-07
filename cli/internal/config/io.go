@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,12 +40,13 @@ func Load(path string) (*RulesFile, error) {
 	return &rf, nil
 }
 
-// Save writes the RulesFile to disk, creating parent directories as needed.
+// Save writes the RulesFile to disk. The parent directory must already
+// exist — `forja init` is responsible for creating forja/, and the cmd
+// layer's requireForjaDir preflight gates every write path. Save itself
+// does NOT mkdir so accidental writes from outside an initialized project
+// fail loudly instead of silently materializing a stray forja/ directory.
 // The output is deterministic (2-space indent, sorted-by-document-order).
 func Save(path string, rf *RulesFile) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
-	}
 	enc, err := marshalYAML(rf)
 	if err != nil {
 		return err
@@ -55,12 +57,22 @@ func Save(path string, rf *RulesFile) error {
 	return nil
 }
 
+// marshalYAML serializes the rules file with a uniform 2-space indent.
+// yaml.v3's package-level Marshal defaults to 4 spaces, which makes the
+// top-level list (`rules:`) indent visually inconsistent with all the
+// nested 2-space indents inside each rule. Going through the Encoder API
+// lets us pin every level to 2 so the output reads cleanly.
 func marshalYAML(rf *RulesFile) ([]byte, error) {
-	out, err := yaml.Marshal(rf)
-	if err != nil {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(rf); err != nil {
 		return nil, fmt.Errorf("marshal yaml: %w", err)
 	}
-	return out, nil
+	if err := enc.Close(); err != nil {
+		return nil, fmt.Errorf("marshal yaml: close: %w", err)
+	}
+	return buf.Bytes(), nil
 }
 
 // AppStatus is the per-app slice of the workspace status. Enabled is the
@@ -250,11 +262,9 @@ func LoadStatus(path string) (Status, error) {
 }
 
 // SaveStatus writes the status to disk. JSON map key order is sorted by
-// encoding/json so the output is stable.
+// encoding/json so the output is stable. The parent directory must already
+// exist — see the Save() comment for the directory-creation contract.
 func SaveStatus(path string, s Status) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
-	}
 	if s == nil {
 		s = Status{}
 	}
