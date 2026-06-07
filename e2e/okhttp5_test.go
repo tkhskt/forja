@@ -20,13 +20,13 @@ import (
 // the sugar path, and verify the device sees HTTP 418. Mirrors
 // TestCoreBasicRewrite but against the OkHttp 5 fixture.
 func TestOkHttp5BasicRewrite(t *testing.T) {
-	resetForjaState(t, PkgOk5Dev)
-	forceStop(t, PkgOk5Dev)
-	startMainActivity(t, PkgOk5Dev)
+	resetForjaState(t, AppOk5Dev)
+	forceStop(t, AppOk5Dev)
+	startMainActivity(t, AppOk5Dev)
 	clearLogcat(t)
 
 	runForja(t, "rules", "add", "ok5-mock",
-		"--pkg", PkgOk5Dev,
+		"--app", AppOk5Dev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"by":"forja-ok5"}`,
@@ -51,7 +51,7 @@ appId: com.tkhskt.forja.sample.ok5
     text: ".*forja-ok5.*"
 `)
 
-	startMainActivity(t, PkgOk5Dev)
+	startMainActivity(t, AppOk5Dev)
 	runInlineMaestro(t, `
 appId: com.tkhskt.forja.sample.ok5
 ---
@@ -68,16 +68,16 @@ appId: com.tkhskt.forja.sample.ok5
 	waitForLogcat(t, "hit 'ok5-mock'", 10*time.Second, "Forja")
 }
 
-// TestOkHttp5OffRestoresOriginalResponse — `forja off --pkg X` empties the
+// TestOkHttp5OffRestoresOriginalResponse — `forja off --app X` empties the
 // per-pkg enabled list and pushes [] so the device falls back to the real
 // HTTP response. Verifies the off path works against OkHttp 5 too.
 func TestOkHttp5OffRestoresOriginalResponse(t *testing.T) {
-	resetForjaState(t, PkgOk5Dev)
-	forceStop(t, PkgOk5Dev)
-	startMainActivity(t, PkgOk5Dev)
+	resetForjaState(t, AppOk5Dev)
+	forceStop(t, AppOk5Dev)
+	startMainActivity(t, AppOk5Dev)
 
 	runForja(t, "rules", "add", "ok5-off",
-		"--pkg", PkgOk5Dev,
+		"--app", AppOk5Dev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 	)
@@ -93,8 +93,8 @@ appId: com.tkhskt.forja.sample.ok5
     timeout: 15000
 `)
 
-	runForja(t, "off", "--pkg", PkgOk5Dev)
-	startMainActivity(t, PkgOk5Dev)
+	runForja(t, "off", "--app", AppOk5Dev)
+	startMainActivity(t, AppOk5Dev)
 	runInlineMaestro(t, `
 appId: com.tkhskt.forja.sample.ok5
 ---

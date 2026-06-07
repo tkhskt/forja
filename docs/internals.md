@@ -2,11 +2,11 @@
 
 ## Overview
 
-When forja pushes to a device (via `forja apply`, the `rules` TUI's save action, `rules add --pkg X`, `forja sync`, or the auto-propagation of `rules update/remove`):
+When forja pushes to a device (via `forja apply`, the `rules` TUI's save action, `rules add --app X`, `forja sync`, or the auto-propagation of `rules update/remove`):
 
-1. For each target pkg, check whether the app is running (`pidof <pkg>`)
+1. For each target app, check whether the app is running (`pidof <app>`)
 2. If the PID differs from the cached one, the app was restarted, so re-attach the agent via `adb shell cmd activity attach-agent`
-3. Merge `forja/rules.yml` + `rules.local.yml`, filter by `status.json[pkg].enabled`, convert to device JSON, and write it to `/data/data/<pkg>/files/rules.json`
+3. Merge `forja/rules.yml` + `rules.local.yml`, filter by `status.json[app].enabled`, convert to device JSON, and write it to `/data/data/<app>/files/rules.json`
 
 The agent (`agent-bundle.dex`) at attach time:
 
@@ -31,7 +31,7 @@ The net result:
 
 | Symptom | Check |
 |---|---|
-| `app not running` error | Is the app actually launched? (`adb shell pidof <pkg>`) |
+| `app not running` error | Is the app actually launched? (`adb shell pidof <app>`) |
 | Rewrite isn't applied after attach | `adb logcat -s ForjaAgent Forja` — look for `capabilities:` and `loaded N rule(s)` |
 | `am attach-agent` failure | Is the app debuggable? On API 28+? Already running? |
 | forja can't find the agent bundle | See the [bundle search order](install.md#bundle-search-order) |
@@ -73,14 +73,14 @@ cd cli && go test ./...
 ./gradlew :runtime:test
 ```
 
-End-to-end suite against an Android emulator + Maestro (covers attach / push / self-destruct / multi-package / OkHttp 4 + 5):
+End-to-end suite against an Android emulator + Maestro (covers attach / push / self-destruct / multi-app / OkHttp 4 + 5):
 
 ```bash
 cd e2e
 go test -tags e2e -v ./...
 ```
 
-The suite installs the fixture app in three variants (`ok4Dev`, `ok4Staging`, `ok5Dev`) so it can exercise multi-package and multi-OkHttp scenarios. See [`e2e/README.md`](../e2e/README.md) for prerequisites (emulator, ADB, Maestro).
+The suite installs the fixture app in three variants (`ok4Dev`, `ok4Staging`, `ok5Dev`) so it can exercise multi-app and multi-OkHttp scenarios. See [`e2e/README.md`](../e2e/README.md) for prerequisites (emulator, ADB, Maestro).
 
 ---
 

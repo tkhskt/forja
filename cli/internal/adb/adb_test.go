@@ -49,30 +49,30 @@ func (f *fakeExecutor) dispatch(name string, args []string, stdin []byte) ([]byt
 	return nil, nil, errors.New("unreachable")
 }
 
-func TestValidatePackage(t *testing.T) {
+func TestValidateApp(t *testing.T) {
 	good := []string{"com.example", "com.foo.bar", "a.b", "x123.y_z.q"}
 	bad := []string{"", "noDot", ".com.foo", "com.", "com..foo", "1com.foo", "com.foo/bar"}
 	for _, g := range good {
-		if err := ValidatePackage(g); err != nil {
-			t.Errorf("ValidatePackage(%q) unexpectedly failed: %v", g, err)
+		if err := ValidateApp(g); err != nil {
+			t.Errorf("ValidateApp(%q) unexpectedly failed: %v", g, err)
 		}
 	}
 	for _, b := range bad {
-		if err := ValidatePackage(b); err == nil {
-			t.Errorf("ValidatePackage(%q) should have failed", b)
+		if err := ValidateApp(b); err == nil {
+			t.Errorf("ValidateApp(%q) should have failed", b)
 		}
 	}
 }
 
-func TestRunAsWriteRejectsBadPackage(t *testing.T) {
+func TestRunAsWriteRejectsBadApp(t *testing.T) {
 	fx := &fakeExecutor{t: t}
 	a := NewWithExecutor(fx)
-	err := a.RunAsWrite(context.Background(), "not_a_pkg", "files/x", []byte("x"))
+	err := a.RunAsWrite(context.Background(), "not_an_app", "files/x", []byte("x"))
 	if err == nil {
-		t.Fatal("expected error for invalid package")
+		t.Fatal("expected error for invalid applicationId")
 	}
 	if len(fx.calls) != 0 {
-		t.Errorf("should not have invoked adb for invalid pkg")
+		t.Errorf("should not have invoked adb for invalid app")
 	}
 }
 
@@ -198,7 +198,7 @@ func TestPrimaryABI(t *testing.T) {
 	}
 }
 
-func TestListDebuggablePackagesParsesLines(t *testing.T) {
+func TestListDebuggableAppsParsesLines(t *testing.T) {
 	fx := &fakeExecutor{
 		t: t,
 		canned: []cannedResponse{
@@ -206,18 +206,18 @@ func TestListDebuggablePackagesParsesLines(t *testing.T) {
 		},
 	}
 	a := NewWithExecutor(fx)
-	pkgs, err := a.ListDebuggablePackages(context.Background())
+	apps, err := a.ListDebuggableApps(context.Background())
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(pkgs) != 2 || pkgs[0] != "com.tkhskt.sample_app" || pkgs[1] != "com.example.other" {
-		t.Errorf("unexpected: %v", pkgs)
+	if len(apps) != 2 || apps[0] != "com.tkhskt.sample_app" || apps[1] != "com.example.other" {
+		t.Errorf("unexpected: %v", apps)
 	}
 }
 
-func TestListDebuggablePackagesFiltersGarbage(t *testing.T) {
+func TestListDebuggableAppsFiltersGarbage(t *testing.T) {
 	// Defensive: even if device echoes something the grep should have filtered,
-	// ValidatePackage drops it before bubbling up to the caller.
+	// ValidateApp drops it before bubbling up to the caller.
 	fx := &fakeExecutor{
 		t: t,
 		canned: []cannedResponse{
@@ -225,13 +225,13 @@ func TestListDebuggablePackagesFiltersGarbage(t *testing.T) {
 		},
 	}
 	a := NewWithExecutor(fx)
-	pkgs, _ := a.ListDebuggablePackages(context.Background())
-	if len(pkgs) != 1 || pkgs[0] != "com.ok" {
-		t.Errorf("expected single valid package, got %v", pkgs)
+	apps, _ := a.ListDebuggableApps(context.Background())
+	if len(apps) != 1 || apps[0] != "com.ok" {
+		t.Errorf("expected single valid applicationId, got %v", apps)
 	}
 }
 
-func TestForegroundPackageExtractsFromDumpsys(t *testing.T) {
+func TestForegroundAppExtractsFromDumpsys(t *testing.T) {
 	fx := &fakeExecutor{
 		t: t,
 		canned: []cannedResponse{
@@ -240,16 +240,16 @@ func TestForegroundPackageExtractsFromDumpsys(t *testing.T) {
 		},
 	}
 	a := NewWithExecutor(fx)
-	pkg, err := a.ForegroundPackage(context.Background())
+	app, err := a.ForegroundApp(context.Background())
 	if err != nil {
 		t.Fatalf("Foreground: %v", err)
 	}
-	if pkg != "com.tkhskt.sample_app" {
-		t.Errorf("want com.tkhskt.sample_app, got %q", pkg)
+	if app != "com.tkhskt.sample_app" {
+		t.Errorf("want com.tkhskt.sample_app, got %q", app)
 	}
 }
 
-func TestForegroundPackageEmptyWhenNothingMatches(t *testing.T) {
+func TestForegroundAppEmptyWhenNothingMatches(t *testing.T) {
 	fx := &fakeExecutor{
 		t: t,
 		canned: []cannedResponse{
@@ -257,12 +257,12 @@ func TestForegroundPackageEmptyWhenNothingMatches(t *testing.T) {
 		},
 	}
 	a := NewWithExecutor(fx)
-	pkg, err := a.ForegroundPackage(context.Background())
+	app, err := a.ForegroundApp(context.Background())
 	if err != nil {
 		t.Fatalf("Foreground: %v", err)
 	}
-	if pkg != "" {
-		t.Errorf("want empty, got %q", pkg)
+	if app != "" {
+		t.Errorf("want empty, got %q", app)
 	}
 }
 

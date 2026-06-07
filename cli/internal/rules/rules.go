@@ -1,10 +1,10 @@
 // Package rules is the engine layer that command handlers call into.
 // It treats forja/rules.yml (project scope) and forja/rules.local.yml
 // (local scope) as the rule definitions and forja/status.json as the
-// per-package enabled state. Operations target one of:
+// per-app enabled state. Operations target one of:
 //
 //   - rule definitions (Add / Update / Remove): writes a yml file
-//   - per-package enabled state (Enable / Disable / ClearPkg): writes status.json
+//   - per-app enabled state (Enable / Disable / ClearApp): writes status.json
 //   - either, by name lookup, when callers don't specify scope
 //
 // Splitting these surfaces keeps the cmd layer thin and prevents the TUI
@@ -65,10 +65,10 @@ func DefaultPaths() Paths {
 	}
 }
 
-// ResolveAlias takes a CLI-provided package value (could be a short alias or
-// a literal package name) and returns the literal package name. Missing
+// ResolveAlias takes a CLI-provided app value (could be a short alias or a
+// literal applicationId) and returns the literal applicationId. Missing
 // aliases pass through unchanged, so callers can always use the result as
-// "the package" without special-casing.
+// "the app" without special-casing.
 func ResolveAlias(paths Paths, input string) (string, error) {
 	if input == "" {
 		return "", nil
@@ -115,7 +115,7 @@ type AddOptions struct {
 
 // Add appends a rule to the file at the given scope. If the file is missing
 // it's created. The added rule does NOT modify status.json — newly added
-// rules are off for every package by default, and become live only when
+// rules are off for every app by default, and become live only when
 // explicitly enabled via Enable() or the TUI.
 func Add(paths Paths, scope Scope, opts AddOptions) error {
 	if opts.Name == "" {
@@ -221,8 +221,8 @@ type UpdateOptions struct {
 // Errors if the rule doesn't exist in the targeted scope.
 //
 // Status.json is NOT touched — Update only edits the rule definition. Callers
-// that want to propagate the new definition to live packages should consult
-// status.PkgsEnabling(name) and push to each.
+// that want to propagate the new definition to live apps should consult
+// status.AppsEnabling(name) and push to each.
 func Update(paths Paths, name string, scope *Scope, opts UpdateOptions) error {
 	var s Scope
 	if scope != nil {
@@ -269,11 +269,11 @@ func Update(paths Paths, name string, scope *Scope, opts UpdateOptions) error {
 	return config.Save(path, rf)
 }
 
-// Enable adds names to pkg's enabled list in status.json. Names that don't
+// Enable adds names to app's enabled list in status.json. Names that don't
 // exist in any yml scope are rejected so typos surface immediately.
-func Enable(paths Paths, pkg string, names []string) error {
-	if pkg == "" {
-		return errors.New("Enable requires a non-empty package")
+func Enable(paths Paths, app string, names []string) error {
+	if app == "" {
+		return errors.New("Enable requires a non-empty app")
 	}
 	if len(names) == 0 {
 		return nil
@@ -292,16 +292,16 @@ func Enable(paths Paths, pkg string, names []string) error {
 		return err
 	}
 	for _, n := range names {
-		st.Enable(pkg, n)
+		st.Enable(app, n)
 	}
 	return config.SaveStatus(paths.Status, st)
 }
 
-// Disable removes names from pkg's enabled list. Unknown rule names are NOT
+// Disable removes names from app's enabled list. Unknown rule names are NOT
 // rejected (you should be able to forcibly clean up stale entries).
-func Disable(paths Paths, pkg string, names []string) error {
-	if pkg == "" {
-		return errors.New("Disable requires a non-empty package")
+func Disable(paths Paths, app string, names []string) error {
+	if app == "" {
+		return errors.New("Disable requires a non-empty app")
 	}
 	if len(names) == 0 {
 		return nil
@@ -311,48 +311,48 @@ func Disable(paths Paths, pkg string, names []string) error {
 		return err
 	}
 	for _, n := range names {
-		st.Disable(pkg, n)
+		st.Disable(app, n)
 	}
 	return config.SaveStatus(paths.Status, st)
 }
 
-// ClearPkg empties pkg's enabled list (= every rule off for this pkg) while
-// keeping the pkg key. Mirrors what `forja off --pkg X` records locally.
-func ClearPkg(paths Paths, pkg string) error {
-	if pkg == "" {
-		return errors.New("ClearPkg requires a non-empty package")
+// ClearApp empties app's enabled list (= every rule off for this app) while
+// keeping the app key. Mirrors what `forja off --app X` records locally.
+func ClearApp(paths Paths, app string) error {
+	if app == "" {
+		return errors.New("ClearApp requires a non-empty app")
 	}
 	st, err := config.LoadStatus(paths.Status)
 	if err != nil {
 		return err
 	}
-	st.ClearPkg(pkg)
+	st.ClearApp(app)
 	return config.SaveStatus(paths.Status, st)
 }
 
-// SetEnabledForPkg overwrites pkg's enabled list with exactly the given
-// names. Used by the TUI on save (when the user toggled rules within a pkg's
-// view). Unknown rule names are NOT rejected — the caller may legitimately
-// be storing a snapshot.
-func SetEnabledForPkg(paths Paths, pkg string, enabled []string) error {
-	if pkg == "" {
-		return errors.New("SetEnabledForPkg requires a non-empty package")
+// SetEnabledForApp overwrites app's enabled list with exactly the given
+// names. Used by the TUI on save (when the user toggled rules within an
+// app's view). Unknown rule names are NOT rejected — the caller may
+// legitimately be storing a snapshot.
+func SetEnabledForApp(paths Paths, app string, enabled []string) error {
+	if app == "" {
+		return errors.New("SetEnabledForApp requires a non-empty app")
 	}
 	st, err := config.LoadStatus(paths.Status)
 	if err != nil {
 		return err
 	}
-	st.ClearPkg(pkg)
+	st.ClearApp(app)
 	for _, n := range enabled {
-		st.Enable(pkg, n)
+		st.Enable(app, n)
 	}
 	return config.SaveStatus(paths.Status, st)
 }
 
-// LoadEffective returns the merged effective rule list for pkg, ready to
-// push. EffectiveRule.Enabled reflects pkg's status.json enabled list (=
-// absent = false).
-func LoadEffective(paths Paths, pkg string) ([]config.EffectiveRule, error) {
+// LoadEffective returns the merged effective rule list for app, ready to
+// push. EffectiveRule.Enabled reflects app's status.json enabled list
+// (absent = false).
+func LoadEffective(paths Paths, app string) ([]config.EffectiveRule, error) {
 	proj, err := config.Load(paths.Project)
 	if err != nil {
 		return nil, err
@@ -367,11 +367,11 @@ func LoadEffective(paths Paths, pkg string) ([]config.EffectiveRule, error) {
 	}
 	projectDir := filepath.Dir(paths.Project)
 	localDir := filepath.Dir(paths.Local)
-	return config.Effective(proj, projectDir, user, localDir, st, pkg), nil
+	return config.Effective(proj, projectDir, user, localDir, st, app), nil
 }
 
 // LoadStatus returns the current status (loading from disk). Convenience for
-// callers that want to walk PkgsEnabling without re-implementing the io step.
+// callers that want to walk AppsEnabling without re-implementing the io step.
 func LoadStatus(paths Paths) (config.Status, error) {
 	return config.LoadStatus(paths.Status)
 }

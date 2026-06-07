@@ -34,8 +34,8 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if s == nil {
 		t.Fatal("want state, got nil")
 	}
-	if s.Package != "com.example.app" {
-		t.Errorf("package mismatch: %q", s.Package)
+	if s.App != "com.example.app" {
+		t.Errorf("app mismatch: %q", s.App)
 	}
 	if s.Pid != 12345 {
 		t.Errorf("pid mismatch: %d", s.Pid)
@@ -59,7 +59,7 @@ func TestSaveCreatesCacheDir(t *testing.T) {
 func TestSaveRejectsBadInput(t *testing.T) {
 	c := NewCache(t.TempDir())
 	if err := c.Save("", 1, time.Now()); err == nil {
-		t.Error("want error for empty pkg")
+		t.Error("want error for empty app")
 	}
 	if err := c.Save("com.example.app", 0, time.Now()); err == nil {
 		t.Error("want error for pid 0")
@@ -98,7 +98,7 @@ func TestClearRemovesFile(t *testing.T) {
 
 func TestShouldReattachProcessNotRunning(t *testing.T) {
 	now := time.Now()
-	cached := &State{Package: "p", Pid: 100, AttachedAt: now.Unix()}
+	cached := &State{App: "p", Pid: 100, AttachedAt: now.Unix()}
 	d := ShouldReattach(cached, 0, now, testTTL)
 	if d.Reattach {
 		t.Errorf("want no reattach when process is gone")
@@ -148,7 +148,7 @@ func TestShouldReattachNoCache(t *testing.T) {
 
 func TestShouldReattachPidChanged(t *testing.T) {
 	now := time.Now()
-	cached := &State{Package: "p", Pid: 100, AttachedAt: now.Unix()}
+	cached := &State{App: "p", Pid: 100, AttachedAt: now.Unix()}
 	d := ShouldReattach(cached, 200, now, testTTL)
 	if !d.Reattach {
 		t.Errorf("want reattach on PID change")
@@ -157,7 +157,7 @@ func TestShouldReattachPidChanged(t *testing.T) {
 
 func TestShouldReattachWithinTTL(t *testing.T) {
 	now := time.Now()
-	cached := &State{Package: "p", Pid: 100, AttachedAt: now.Add(-1 * time.Hour).Unix()}
+	cached := &State{App: "p", Pid: 100, AttachedAt: now.Add(-1 * time.Hour).Unix()}
 	d := ShouldReattach(cached, 100, now, testTTL)
 	if d.Reattach {
 		t.Errorf("want no reattach within TTL, reason=%s", d.Reason)
@@ -166,7 +166,7 @@ func TestShouldReattachWithinTTL(t *testing.T) {
 
 func TestShouldReattachExpiredTTL(t *testing.T) {
 	now := time.Now()
-	cached := &State{Package: "p", Pid: 100, AttachedAt: now.Add(-24 * time.Hour).Unix()}
+	cached := &State{App: "p", Pid: 100, AttachedAt: now.Add(-24 * time.Hour).Unix()}
 	d := ShouldReattach(cached, 100, now, testTTL)
 	if !d.Reattach {
 		t.Errorf("want reattach when older than TTL")

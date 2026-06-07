@@ -11,16 +11,16 @@ import (
 func newAliasCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "alias",
-		Short: "Manage personal package-name aliases (forja/aliases.local.yml — gitignore it locally)",
-		Long: `Define short aliases for frequently-used Android package names. Any forja
-command that takes --pkg accepts an alias in place of the full name:
+		Short: "Manage personal applicationId aliases (forja/aliases.local.yml — gitignore it locally)",
+		Long: `Define short aliases for frequently-used Android applicationId names. Any forja
+command that takes --app accepts an alias in place of the full name:
 
   forja alias set dev com.tkhskt.forja.sample
-  forja apply --pkg dev --enable teapot         # → com.tkhskt.forja.sample
+  forja apply --app dev --enable teapot         # → com.tkhskt.forja.sample
 
 Aliases live in forja/aliases.local.yml — per-developer file that you should
 gitignore (forja never touches your .gitignore for you). Unknown inputs to
---pkg pass through unchanged, so literal package names still work.`,
+--app pass through unchanged, so literal applicationIds still work.`,
 	}
 	c.AddCommand(newAliasSetCmd())
 	c.AddCommand(newAliasRmCmd())
@@ -30,24 +30,24 @@ gitignore (forja never touches your .gitignore for you). Unknown inputs to
 
 func newAliasSetCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "set NAME PKG",
-		Short: "Map an alias to a package name (overwrites existing)",
+		Use:   "set NAME APP",
+		Short: "Map an alias to an applicationId (overwrites existing)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name, pkg := args[0], args[1]
-			if name == "" || pkg == "" {
-				return errors.New("alias name and package must be non-empty")
+			name, app := args[0], args[1]
+			if name == "" || app == "" {
+				return errors.New("alias name and applicationId must be non-empty")
 			}
 			paths := rulesPaths()
 			a, err := rules.LoadAliases(paths)
 			if err != nil {
 				return err
 			}
-			a[name] = pkg
+			a[name] = app
 			if err := rules.SaveAliases(paths, a); err != nil {
 				return err
 			}
-			fmt.Printf("alias %q → %s\n", name, pkg)
+			fmt.Printf("alias %q → %s\n", name, app)
 			return nil
 		},
 	}
@@ -88,7 +88,7 @@ func newAliasListCmd() *cobra.Command {
 				return err
 			}
 			if len(a) == 0 {
-				fmt.Println("(no aliases set — use `forja alias set NAME PKG`)")
+				fmt.Println("(no aliases set — use `forja alias set NAME APP`)")
 				return nil
 			}
 			for _, k := range a.SortedKeys() {

@@ -145,47 +145,47 @@ func TestStatusEnableDisableMutations(t *testing.T) {
 	}
 }
 
-func TestStatusPkgsEnablingFindsAll(t *testing.T) {
+func TestStatusAppsEnablingFindsAll(t *testing.T) {
 	s := Status{
 		"com.a": {Enabled: []string{"shared", "a-only"}},
 		"com.b": {Enabled: []string{"shared"}},
 		"com.c": {Enabled: []string{"c-only"}},
 	}
-	pkgs := s.PkgsEnabling("shared")
+	apps := s.AppsEnabling("shared")
 	want := []string{"com.a", "com.b"}
-	if !reflect.DeepEqual(pkgs, want) {
-		t.Errorf("PkgsEnabling(shared): want %v, got %v", want, pkgs)
+	if !reflect.DeepEqual(apps, want) {
+		t.Errorf("AppsEnabling(shared): want %v, got %v", want, apps)
 	}
-	if got := s.PkgsEnabling("a-only"); !reflect.DeepEqual(got, []string{"com.a"}) {
-		t.Errorf("PkgsEnabling(a-only): got %v", got)
+	if got := s.AppsEnabling("a-only"); !reflect.DeepEqual(got, []string{"com.a"}) {
+		t.Errorf("AppsEnabling(a-only): got %v", got)
 	}
-	if got := s.PkgsEnabling("missing"); len(got) != 0 {
-		t.Errorf("PkgsEnabling(missing): want empty, got %v", got)
+	if got := s.AppsEnabling("missing"); len(got) != 0 {
+		t.Errorf("AppsEnabling(missing): want empty, got %v", got)
 	}
 }
 
-func TestStatusDropRuleSweepsAllPkgs(t *testing.T) {
+func TestStatusDropRuleSweepsAllApps(t *testing.T) {
 	s := Status{
 		"com.a": {Enabled: []string{"shared", "a-only"}},
 		"com.b": {Enabled: []string{"shared"}},
 	}
 	s.DropRule("shared")
 	if s.IsEnabled("com.a", "shared") || s.IsEnabled("com.b", "shared") {
-		t.Errorf("shared should be gone from all pkgs: %+v", s)
+		t.Errorf("shared should be gone from all apps: %+v", s)
 	}
 	if !s.IsEnabled("com.a", "a-only") {
 		t.Errorf("a-only lost as collateral: %+v", s)
 	}
 }
 
-func TestStatusClearPkgKeepsKey(t *testing.T) {
+func TestStatusClearAppKeepsKey(t *testing.T) {
 	s := Status{"com.a": {Enabled: []string{"foo"}}}
-	s.ClearPkg("com.a")
+	s.ClearApp("com.a")
 	if _, ok := s["com.a"]; !ok {
-		t.Errorf("ClearPkg should keep the key (with empty list)")
+		t.Errorf("ClearApp should keep the key (with empty list)")
 	}
 	if len(s["com.a"].Enabled) != 0 {
-		t.Errorf("ClearPkg should empty the list: %+v", s["com.a"])
+		t.Errorf("ClearApp should empty the list: %+v", s["com.a"])
 	}
 }
 
@@ -213,12 +213,12 @@ func TestStatusJSONEmbedsCommentAtTop(t *testing.T) {
 	if !strings.Contains(body, "DO NOT EDIT") {
 		t.Errorf("expected a do-not-edit hint in $comment value; got:\n%s", body)
 	}
-	// $comment must precede every package key (the marshaler sorts by ASCII
+	// $comment must precede every app key (the marshaler sorts by ASCII
 	// and `$` 0x24 is less than every letter, so this should hold).
 	commentIdx := strings.Index(body, `"$comment"`)
-	for _, pkg := range []string{`"com.a"`, `"com.b"`} {
-		if idx := strings.Index(body, pkg); idx > 0 && idx < commentIdx {
-			t.Errorf("$comment should appear before %s; got: comment=%d %s=%d", pkg, commentIdx, pkg, idx)
+	for _, app := range []string{`"com.a"`, `"com.b"`} {
+		if idx := strings.Index(body, app); idx > 0 && idx < commentIdx {
+			t.Errorf("$comment should appear before %s; got: comment=%d %s=%d", app, commentIdx, app, idx)
 		}
 	}
 }
@@ -226,7 +226,7 @@ func TestStatusJSONEmbedsCommentAtTop(t *testing.T) {
 // TestStatusJSONLoadIgnoresMetaKeys: hand-authored status.json files (or
 // older forja outputs that introduce additional `$`-prefixed metadata keys)
 // must load successfully — the metadata is silently dropped, the real
-// package entries survive.
+// app entries survive.
 func TestStatusJSONLoadIgnoresMetaKeys(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "status.json")

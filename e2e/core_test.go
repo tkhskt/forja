@@ -17,13 +17,13 @@ import (
 
 // TestCoreBasicRewrite — basic rewrite via singleton OkHttpClient.
 func TestCoreBasicRewrite(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 	clearLogcat(t)
 
 	runForja(t, "rules", "add", "mock-teapot",
-		"--pkg", PkgDev,
+		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
@@ -53,12 +53,12 @@ appId: com.tkhskt.forja.sample
 // TestCoreSelfDestruct — after push, rules.json should be absent on the
 // device because the agent reads it and deletes it.
 func TestCoreSelfDestruct(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "x",
-		"--pkg", PkgDev,
+		"--app", AppDev,
 		"--host", "example.com", "--status", "418",
 	)
 	waitForLogcat(t, "self-destruct mode enabled", 30*time.Second, "ForjaAgent")
@@ -69,13 +69,13 @@ func TestCoreSelfDestruct(t *testing.T) {
 	// Give the agent a moment to ingest + delete.
 	time.Sleep(1 * time.Second)
 
-	out, exists := readDeviceFile(t, PkgDev, "files/rules.json")
+	out, exists := readDeviceFile(t, AppDev, "files/rules.json")
 	if exists {
 		t.Errorf("rules.json should have been self-destructed; still present:\n%s", out)
 	}
 
 	// Sibling agent files SHOULD still be there.
-	ls := deviceListFiles(t, PkgDev, "files/")
+	ls := deviceListFiles(t, AppDev, "files/")
 	for _, want := range []string{"libforja-agent.so", "agent-bundle.dex"} {
 		if !strings.Contains(ls, want) {
 			t.Errorf("expected %s to still be present in files/, got:\n%s", want, ls)
@@ -86,12 +86,12 @@ func TestCoreSelfDestruct(t *testing.T) {
 // TestCoreProcessKillClearsRules — kill the app and verify the next launch
 // no longer sees the rewrites. Nothing persists across an app restart.
 func TestCoreProcessKillClearsRules(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "kill-test",
-		"--pkg", PkgDev,
+		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
@@ -102,8 +102,8 @@ func TestCoreProcessKillClearsRules(t *testing.T) {
 	maestroFlow(t, "tap_singleton_assert_418.yaml")
 
 	// Now kill + relaunch.
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 	clearLogcat(t)
 
 	// Verify the response is back to baseline (200). The HTTP call to
@@ -111,48 +111,48 @@ func TestCoreProcessKillClearsRules(t *testing.T) {
 	maestroFlow(t, "tap_singleton_assert_200.yaml")
 
 	// And rules.json is not on the device (agent is dead, never re-attached).
-	if _, exists := readDeviceFile(t, PkgDev, "files/rules.json"); exists {
+	if _, exists := readDeviceFile(t, AppDev, "files/rules.json"); exists {
 		t.Error("rules.json should not exist after process kill; agent should be dead")
 	}
 }
 
-// TestCoreOff — forja off pushes [] AND empties the package's enabled list in
+// TestCoreOff — forja off pushes [] AND empties the app's enabled list in
 // status.json.
 func TestCoreOff(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 
-	// Both rules added with --pkg so they're enabled on PkgDev via the sugar
+	// Both rules added with --app so they're enabled on AppDev via the sugar
 	// path (yml + status.enable + push).
 	runForja(t, "rules", "add", "a",
-		"--pkg", PkgDev,
+		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
 	runForja(t, "rules", "add", "b",
-		"--pkg", PkgDev,
+		"--app", AppDev,
 		"--host", "example.com", "--path", "/other",
 		"--status", "503",
 	)
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 
-	// Sanity: before off, both should be in PkgDev's enabled list.
-	if st := readStatusJSON(t); !st.IsEnabled(PkgDev, "a") || !st.IsEnabled(PkgDev, "b") {
-		t.Fatalf("status.json before off should have a,b enabled on %s, got %+v", PkgDev, st)
+	// Sanity: before off, both should be in AppDev's enabled list.
+	if st := readStatusJSON(t); !st.IsEnabled(AppDev, "a") || !st.IsEnabled(AppDev, "b") {
+		t.Fatalf("status.json before off should have a,b enabled on %s, got %+v", AppDev, st)
 	}
 
 	// Off.
-	out := runForja(t, "off", "--pkg", PkgDev)
+	out := runForja(t, "off", "--app", AppDev)
 	if !strings.Contains(out, "cleared rules") {
 		t.Errorf("expected off output to mention cleared rules, got: %s", out)
 	}
 
-	// Status.json[PkgDev].enabled should now be empty.
+	// Status.json[AppDev].enabled should now be empty.
 	st := readStatusJSON(t)
-	if st.IsEnabled(PkgDev, "a") || st.IsEnabled(PkgDev, "b") {
-		t.Errorf("status.json after off: want a,b disabled on %s, got %+v", PkgDev, st)
+	if st.IsEnabled(AppDev, "a") || st.IsEnabled(AppDev, "b") {
+		t.Errorf("status.json after off: want a,b disabled on %s, got %+v", AppDev, st)
 	}
 
 	// Tapping the button now returns 200 (no rewrite).
@@ -163,16 +163,16 @@ func TestCoreOff(t *testing.T) {
 // TestCoreBodyFile — bodyFile is read at push time and the response body is
 // the file's content.
 func TestCoreBodyFile(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 
 	// Copy the fixture into the forja directory so its bodyFile path resolves
 	// relative to forja/rules.local.yml.
 	mkForjaResponsesDir(t, "teapot_response.json")
 
 	runForja(t, "rules", "add", "bodyfile-rule",
-		"--pkg", PkgDev,
+		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body-file", "responses/teapot_response.json",

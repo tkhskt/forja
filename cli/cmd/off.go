@@ -11,40 +11,40 @@ import (
 )
 
 func newOffCmd() *cobra.Command {
-	var pkg string
+	var app string
 	c := &cobra.Command{
-		Use:   "off --pkg PKG",
-		Short: "Clear rules on a package: push [] to device AND empty its enabled list in status.json",
-		Long: `Writes [] to /data/data/<pkg>/files/rules.json AND empties the package's
+		Use:   "off --app APP",
+		Short: "Clear rules on an app: push [] to device AND empty its enabled list in status.json",
+		Long: `Clear all rewrites on the given app's
 enabled list in forja/status.json. The yml rule catalog is NOT modified — you
-can re-enable individual rules via 'forja apply --pkg X --enable ...' or the
-TUI when you want to re-engage on this package.
+can re-enable individual rules via 'forja apply --app X --enable ...' or the
+TUI when you want to re-engage on this app.
 
-Only the named package is affected; other packages' status entries stay intact.`,
+Only the named app is affected; other apps' status entries stay intact.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if pkg == "" {
-				return errors.New("--pkg is required")
+			if app == "" {
+				return errors.New("--app is required")
 			}
-			resolvedPkg, err := resolvePkg(pkg)
+			resolvedApp, err := resolveApp(app)
 			if err != nil {
 				return err
 			}
-			pkg = resolvedPkg
+			app = resolvedApp
 			eng, err := engine.New(globals.BundleDir)
 			if err != nil {
 				return err
 			}
-			if err := eng.Off(context.Background(), pkg); err != nil {
+			if err := eng.Off(context.Background(), app); err != nil {
 				return err
 			}
 			paths := rulesPaths()
-			if err := rules.ClearPkg(paths, pkg); err != nil {
+			if err := rules.ClearApp(paths, app); err != nil {
 				return fmt.Errorf("update status.json: %w", err)
 			}
-			fmt.Printf("[off] cleared rules on %s\n", pkg)
+			fmt.Printf("[off] cleared rules on %s\n", app)
 			return nil
 		},
 	}
-	c.Flags().StringVar(&pkg, "pkg", "", "target Android package or alias (required)")
+	c.Flags().StringVar(&app, "app", "", "target Android applicationId or alias (required)")
 	return c
 }

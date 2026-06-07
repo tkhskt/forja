@@ -20,13 +20,13 @@ import (
 // TestSyncAfterAddImmediatelyEffective: add a rule and the device must see it
 // without an explicit `forja rules` (= auto-push works end-to-end).
 func TestSyncAfterAddImmediatelyEffective(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 	clearLogcat(t)
 
 	runForja(t, "rules", "add", "immediate",
-		"--pkg", PkgDev,
+		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
@@ -38,12 +38,12 @@ func TestSyncAfterAddImmediatelyEffective(t *testing.T) {
 // TestSyncUpdatePatchAppliesToDevice: update a rule's status code and the
 // device should reflect the new value immediately.
 func TestSyncUpdatePatchAppliesToDevice(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "iter",
-		"--pkg", PkgDev,
+		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 	)
@@ -69,12 +69,12 @@ appId: com.tkhskt.forja.sample
 // TestSyncRemoveDropsFromDevice: removing a rule should drop it from the
 // device immediately.
 func TestSyncRemoveDropsFromDevice(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "ephemeral",
-		"--pkg", PkgDev,
+		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 	)
@@ -87,28 +87,28 @@ func TestSyncRemoveDropsFromDevice(t *testing.T) {
 }
 
 // TestSyncOffStatusDisablesAllInJSON: forja off pushes [] AND empties the
-// package's enabled list in status.json (= view-truth invariant).
+// app's enabled list in status.json (= view-truth invariant).
 func TestSyncOffStatusDisablesAllInJSON(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 
-	// All three rules added with --pkg so each is enabled on PkgDev (sugar
+	// All three rules added with --app so each is enabled on AppDev (sugar
 	// path). x is in user scope (default), z in project (via --project), y
-	// also user. After this, status.json[PkgDev].enabled = [x, y, z].
-	runForja(t, "rules", "add", "x", "--pkg", PkgDev,
+	// also user. After this, status.json[AppDev].enabled = [x, y, z].
+	runForja(t, "rules", "add", "x", "--app", AppDev,
 		"--host", "example.com", "--status", "418")
-	runForja(t, "rules", "add", "y", "--pkg", PkgDev,
+	runForja(t, "rules", "add", "y", "--app", AppDev,
 		"--host", "example.com", "--path", "/x", "--status", "503")
-	runForja(t, "rules", "add", "z", "--pkg", PkgDev, "--project",
+	runForja(t, "rules", "add", "z", "--app", AppDev, "--project",
 		"--host", "example.com", "--path", "/y", "--status", "401")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 
-	runForja(t, "off", "--pkg", PkgDev)
+	runForja(t, "off", "--app", AppDev)
 	st := readStatusJSON(t)
 	for _, name := range []string{"x", "y", "z"} {
-		if st.IsEnabled(PkgDev, name) {
-			t.Errorf("after off: %q should be disabled on %s, got %+v", name, PkgDev, st)
+		if st.IsEnabled(AppDev, name) {
+			t.Errorf("after off: %q should be disabled on %s, got %+v", name, AppDev, st)
 		}
 	}
 	// yml files must not be touched.
@@ -122,26 +122,26 @@ func TestSyncOffStatusDisablesAllInJSON(t *testing.T) {
 // verify the cmd layer re-attaches to the new PID and the new rule definition
 // takes effect on device.
 func TestSyncProcessKillThenNewPushReAttaches(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "rk",
-		"--pkg", PkgDev,
+		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 	)
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 	maestroFlow(t, "tap_singleton_assert_418.yaml")
 
-	pidBefore := pidof(t, PkgDev)
+	pidBefore := pidof(t, AppDev)
 	if pidBefore == 0 {
 		t.Fatal("app should be running before kill")
 	}
 
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
-	pidAfter := pidof(t, PkgDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
+	pidAfter := pidof(t, AppDev)
 	if pidAfter == pidBefore {
 		t.Fatalf("PID should change after force-stop+start: %d → %d", pidBefore, pidAfter)
 	}
@@ -166,12 +166,12 @@ appId: com.tkhskt.forja.sample
 // TestSyncNoOpAfterIdenticalState: an `update` that doesn't change anything
 // should still be idempotent (no error, push works, no churn).
 func TestSyncNoOpUpdateIsIdempotent(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "noop",
-		"--pkg", PkgDev,
+		"--app", AppDev,
 		"--host", "example.com", "--status", "418")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 
@@ -191,22 +191,22 @@ func TestSyncNoOpUpdateIsIdempotent(t *testing.T) {
 // TestSyncProjectAndUserBothPushed: rules in both scopes are merged and the
 // device gets all enabled ones.
 func TestSyncProjectAndUserBothPushed(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 
-	// team-rule lives in project yml (committed). Without --pkg it's a pure
+	// team-rule lives in project yml (committed). Without --app it's a pure
 	// catalog entry — not yet pushed to any device.
 	runForja(t, "rules", "add", "team-rule", "--project",
 		"--host", "team.example.com", "--status", "200")
-	// user-rule (user scope) added with --pkg → enabled on PkgDev + pushed.
-	runForja(t, "rules", "add", "user-rule", "--pkg", PkgDev,
+	// user-rule (user scope) added with --app → enabled on AppDev + pushed.
+	runForja(t, "rules", "add", "user-rule", "--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
-	// Enable team-rule on PkgDev too so both scopes' rules are effective.
-	runForja(t, "apply", "--pkg", PkgDev, "--enable", "team-rule")
+	// Enable team-rule on AppDev too so both scopes' rules are effective.
+	runForja(t, "apply", "--app", AppDev, "--enable", "team-rule")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 
 	// The hit should come from user-rule (it matches the sample app's URL).
@@ -220,12 +220,12 @@ func TestSyncProjectAndUserBothPushed(t *testing.T) {
 // manual change to the device — yml is the source of truth, the CLI is just
 // one way of mutating it.
 func TestSyncManualYmlEditTakesEffectOnNextCommand(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "hand-edit",
-		"--pkg", PkgDev,
+		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 	)
@@ -266,13 +266,13 @@ appId: com.tkhskt.forja.sample
 // directly in yml is picked up by the next `apply --enable`, which sees the
 // fresh catalog entry and pushes the rule to the device.
 func TestSyncManualYmlAddNewRuleIsPicked(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 
 	// A stub rule on /unused — its only job is to bring up the agent. The
 	// hand-added rule on / is what should actually take effect.
-	runForja(t, "rules", "add", "stub", "--pkg", PkgDev,
+	runForja(t, "rules", "add", "stub", "--app", AppDev,
 		"--host", "example.com", "--path", "/unused", "--status", "200",
 	)
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
@@ -294,8 +294,8 @@ func TestSyncManualYmlAddNewRuleIsPicked(t *testing.T) {
 		t.Fatalf("write yml: %v", err)
 	}
 
-	// Apply: enable hand-added on PkgDev → reads updated yml → pushes.
-	runForja(t, "apply", "--pkg", PkgDev, "--enable", "hand-added")
+	// Apply: enable hand-added on AppDev → reads updated yml → pushes.
+	runForja(t, "apply", "--app", AppDev, "--enable", "hand-added")
 
 	// Tapping / should hit the hand-added rule.
 	runInlineMaestro(t, `
@@ -315,18 +315,18 @@ appId: com.tkhskt.forja.sample
 // TestSyncManualYmlRemoveRuleDropsFromDevice: deleting a rule entry directly in
 // yml (without `forja rules remove`) drops it from the device on next sync.
 func TestSyncManualYmlRemoveRuleDropsFromDevice(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 
-	runForja(t, "rules", "add", "doomed", "--pkg", PkgDev,
+	runForja(t, "rules", "add", "doomed", "--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 	)
-	// A second rule (also enabled on PkgDev) we can `update --no-op` against
-	// to trigger re-sync after the doomed entry is gone. Without --pkg, keep
+	// A second rule (also enabled on AppDev) we can `update --no-op` against
+	// to trigger re-sync after the doomed entry is gone. Without --app, keep
 	// would be yml-only and update wouldn't auto-propagate anywhere.
-	runForja(t, "rules", "add", "keep", "--pkg", PkgDev,
+	runForja(t, "rules", "add", "keep", "--app", AppDev,
 		"--host", "example.com", "--path", "/unused",
 		"--status", "200",
 	)
@@ -356,19 +356,19 @@ func TestSyncManualYmlRemoveRuleDropsFromDevice(t *testing.T) {
 // TestSyncOffPushesEmptyArray: device's rules.json should be replaced with
 // [] (= the agent reads, finds empty, removes the file, behavior reverts).
 func TestSyncOffPushesEmptyArray(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "before-off",
-		"--pkg", PkgDev,
+		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 	)
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 	maestroFlow(t, "tap_singleton_assert_418.yaml")
 
-	runForja(t, "off", "--pkg", PkgDev)
+	runForja(t, "off", "--app", AppDev)
 	maestroFlow(t, "tap_singleton_assert_200.yaml")
 }
 
@@ -378,19 +378,19 @@ func TestSyncOffPushesEmptyArray(t *testing.T) {
 //
 // sync is the explicit "re-push the current effective state" entry point.
 // Use case: hand-edit forja/rules.local.yml, then run `forja sync` to make
-// the change visible on every package that already has the affected rule
+// the change visible on every app that already has the affected rule
 // enabled. sync NEVER writes status.json — only reads.
 
 // TestSyncCommandReflectsManualBodyEdit: hand-edit the body of an enabled
 // rule and verify that `forja sync` (with no args) propagates the change to
 // the device.
 func TestSyncCommandReflectsManualBodyEdit(t *testing.T) {
-	resetForjaState(t, PkgDev)
-	forceStop(t, PkgDev)
-	startMainActivity(t, PkgDev)
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "synced-body",
-		"--pkg", PkgDev,
+		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"before":"sync"}`,
@@ -426,7 +426,7 @@ appId: com.tkhskt.forja.sample
 	// Push the hand edit via the explicit sync command.
 	runForja(t, "sync")
 
-	startMainActivity(t, PkgDev)
+	startMainActivity(t, AppDev)
 	runInlineMaestro(t, `
 appId: com.tkhskt.forja.sample
 ---
@@ -441,24 +441,24 @@ appId: com.tkhskt.forja.sample
 `)
 }
 
-// TestSyncCommandPkgFilterOnlyAffectsTarget: when both PkgDev and PkgStaging
-// have the same rule enabled, `forja sync --pkg PkgDev` must update PkgDev
-// only — PkgStaging keeps the pre-edit body.
+// TestSyncCommandPkgFilterOnlyAffectsTarget: when both AppDev and AppStaging
+// have the same rule enabled, `forja sync --app AppDev` must update AppDev
+// only — AppStaging keeps the pre-edit body.
 func TestSyncCommandPkgFilterOnlyAffectsTarget(t *testing.T) {
-	resetForjaState(t, PkgDev, PkgStaging)
-	for _, p := range []string{PkgDev, PkgStaging} {
+	resetForjaState(t, AppDev, AppStaging)
+	for _, p := range []string{AppDev, AppStaging} {
 		forceStop(t, p)
 		startMainActivity(t, p)
 	}
 
-	// Enable a single rule on both packages with the same starting body.
+	// Enable a single rule on both apps with the same starting body.
 	runForja(t, "rules", "add", "filter-rule",
-		"--pkg", PkgDev,
+		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"phase":"before"}`,
 	)
-	runForja(t, "apply", "--pkg", PkgStaging, "--enable", "filter-rule")
+	runForja(t, "apply", "--app", AppStaging, "--enable", "filter-rule")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 
 	// Confirm baseline: both apps see "before".
@@ -476,7 +476,7 @@ func TestSyncCommandPkgFilterOnlyAffectsTarget(t *testing.T) {
 `)
 	}
 
-	// Hand-edit body, then sync ONLY PkgDev.
+	// Hand-edit body, then sync ONLY AppDev.
 	ymlPath := filepath.Join(repoRoot, "forja", "rules.local.yml")
 	raw, err := os.ReadFile(ymlPath)
 	if err != nil {
@@ -489,10 +489,10 @@ func TestSyncCommandPkgFilterOnlyAffectsTarget(t *testing.T) {
 	if err := os.WriteFile(ymlPath, []byte(edited), 0o644); err != nil {
 		t.Fatalf("write yml: %v", err)
 	}
-	runForja(t, "sync", "--pkg", PkgDev)
+	runForja(t, "sync", "--app", AppDev)
 
-	// PkgDev should now show "after".
-	startMainActivity(t, PkgDev)
+	// AppDev should now show "after".
+	startMainActivity(t, AppDev)
 	runInlineMaestro(t, `
 appId: com.tkhskt.forja.sample
 ---
@@ -506,8 +506,8 @@ appId: com.tkhskt.forja.sample
     text: ".*after.*"
 `)
 
-	// PkgStaging should still show "before" (untouched by --pkg-filtered sync).
-	startMainActivity(t, PkgStaging)
+	// AppStaging should still show "before" (untouched by --app-filtered sync).
+	startMainActivity(t, AppStaging)
 	runInlineMaestro(t, `
 appId: com.tkhskt.forja.sample.staging
 ---
@@ -522,16 +522,16 @@ appId: com.tkhskt.forja.sample.staging
 `)
 }
 
-// TestSyncCommandRejectsUnknownPkg: `forja sync --pkg X` must fail when X has
+// TestSyncCommandRejectsUnknownPkg: `forja sync --app X` must fail when X has
 // no status.json entry, telling the user to run `forja apply` first.
 func TestSyncCommandRejectsUnknownPkg(t *testing.T) {
-	resetForjaState(t, PkgDev)
+	resetForjaState(t, AppDev)
 
-	// Seed status.json with a different package so the file isn't empty.
+	// Seed status.json with a different app so the file isn't empty.
 	runForja(t, "rules", "add", "stub", "--host", "example.com", "--path", "/foo", "--status", "418")
-	runForja(t, "apply", "--pkg", PkgDev, "--enable", "stub")
+	runForja(t, "apply", "--app", AppDev, "--enable", "stub")
 
-	out, err := runForjaAllowingFailure(t, "sync", "--pkg", "com.no.such.pkg")
+	out, err := runForjaAllowingFailure(t, "sync", "--app", "com.no.such.pkg")
 	if err == nil {
 		t.Fatalf("expected sync of an unknown pkg to fail; got success. output:\n%s", out)
 	}
@@ -543,7 +543,7 @@ func TestSyncCommandRejectsUnknownPkg(t *testing.T) {
 // TestSyncCommandWithEmptyStatusErrors: `forja sync` with no status entries
 // at all has nothing to do — it should error rather than silently no-op.
 func TestSyncCommandWithEmptyStatusErrors(t *testing.T) {
-	resetForjaState(t, PkgDev)
+	resetForjaState(t, AppDev)
 
 	// Don't add anything; status.json never gets created.
 	out, err := runForjaAllowingFailure(t, "sync")

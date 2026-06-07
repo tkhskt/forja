@@ -1,15 +1,15 @@
 # Usage
 
-forja treats the current working directory as a single "project". The yml file is **the rule catalog** and `status.json` is **the per-package on/off state** — those two responsibilities live in separate files.
+forja treats the current working directory as a single "project". The yml file is **the rule catalog** and `status.json` is **the per-app on/off state** — those two responsibilities live in separate files.
 
 | File | Scope | Git | Role | Edit by hand? |
 |---|---|---|---|---|
 | `forja/rules.yml` | **project** | commit | rule catalog shared by the team | ✅ |
 | `forja/rules.local.yml` | **local** | gitignore | personal rule catalog (overrides project) | ✅ |
-| `forja/status.json` | (state) | gitignore | **per-package** enabled state | ❌ CLI-managed |
-| `forja/aliases.local.yml` | (personal) | gitignore | optional short-name map for `--pkg` | ✅ |
+| `forja/status.json` | (state) | gitignore | **per-app** enabled state | ❌ CLI-managed |
+| `forja/aliases.local.yml` | (personal) | gitignore | optional short-name map for `--app` | ✅ |
 
-The yml file holds no information about which package a rule targets, so the same rule can be reused across multiple packages (dev/staging variants, multiple apps in a monorepo, etc.).
+The yml file holds no information about which app a rule targets, so the same rule can be reused across multiple apps (dev/staging variants, multiple apps in a monorepo, etc.).
 
 ---
 
@@ -18,18 +18,18 @@ The yml file holds no information about which package a rule targets, so the sam
 ### 1. Add and apply in one step
 
 ```bash
-forja rules add mock-failure --pkg com.tkhskt.sample_app \
+forja rules add mock-failure --app com.tkhskt.sample_app \
     --host example.com --path /foo \
     --status 500 --body '{"message":"failure"}'
 ```
 
-This appends the rule to `forja/rules.local.yml`, enables it on the named package in `status.json`, and pushes to the device.
+This appends the rule to `forja/rules.local.yml`, enables it on the named app in `status.json`, and pushes to the device.
 
 ### 2. Add to the catalog only, apply later
 
 ```bash
 forja rules add slow-bar --host example.com --path /bar --status 503
-forja apply --pkg com.tkhskt.sample_app --enable slow-bar
+forja apply --app com.tkhskt.sample_app --enable slow-bar
 ```
 
 Useful when you want a shared catalog but per-developer enable choices.
@@ -40,14 +40,14 @@ Useful when you want a shared catalog but per-developer enable choices.
 forja rules update mock-failure --status 502
 ```
 
-Patch semantics — only the fields you pass change. Auto-pushes to every package where the rule is currently enabled.
+Patch semantics — only the fields you pass change. Auto-pushes to every app where the rule is currently enabled.
 
 ### 4. Hand-edit the yml, then sync
 
 ```bash
 $EDITOR forja/rules.local.yml
-forja sync                 # re-push to every package with a status entry
-forja sync --pkg dev       # or just one package (alias or full name)
+forja sync                 # re-push to every app with a status entry
+forja sync --app dev       # or just one app (alias or full name)
 ```
 
 `sync` is read-only on `status.json` — it never changes which rules are enabled, only re-pushes the current effective set so a hand edit reaches the device.
@@ -55,19 +55,19 @@ forja sync --pkg dev       # or just one package (alias or full name)
 ### 5. Toggle interactively (TUI)
 
 ```bash
-forja rules                           # picks a package, then opens the toggle list
-forja rules --pkg com.tkhskt.sample_app   # skip the picker
+forja rules                           # picks an app, then opens the toggle list
+forja rules --app com.tkhskt.sample_app   # skip the picker
 ```
 
 Pressing `q` saves and pushes. Pressing `ctrl-c` discards changes.
 
-### 6. Clear a package
+### 6. Clear an app
 
 ```bash
-forja off --pkg com.tkhskt.sample_app
+forja off --app com.tkhskt.sample_app
 ```
 
-Turns off every rewrite on the named package, so the app sees the original (real) responses again. Other packages are untouched. Re-enable rules anytime via `forja apply` or the TUI.
+Turns off every rewrite on the named app, so the app sees the original (real) responses again. Other apps are untouched. Re-enable rules anytime via `forja apply` or the TUI.
 
 ---
 
@@ -75,24 +75,24 @@ Turns off every rewrite on the named package, so the app sees the original (real
 
 | Command | Behavior |
 |---|---|
-| `forja rules add NAME [flags]` | Add to the catalog (yml only). With `--pkg X`, also **enables on X and pushes** (sugar) |
-| `forja rules update NAME [flags]` | Patch the yml + **auto-push to every pkg where the rule is enabled**. `--no-sync` suppresses the push |
-| `forja rules remove NAME` | Delete from yml + **auto-push to every pkg where it was enabled** + drop the entry from every pkg in `status.json`. `--no-sync` suppresses the push |
-| `forja apply --pkg X --enable a,b [--disable c]` | Patch `status.json[X]` and push (one of `--enable`/`--disable` is required) |
-| `forja sync [--pkg X]` | **Read-only on `status.json`.** Re-push the current effective rule set to every pkg with a status entry (or just X). Use this after hand-editing the yml to make the change visible on the device |
-| `forja rules` | TUI: (1) list debuggable packages on the device → (2) pick one → (3) show the rule list with per-pkg toggles → q to push |
-| `forja rules --pkg X` | TUI: skip the picker and jump straight to the rule list for X |
-| `forja off --pkg X` | Turn off every rewrite on X (other packages untouched) |
-| `forja alias set NAME PKG` | Register a short name to use anywhere `--pkg` is accepted (writes to `forja/aliases.local.yml` — a personal file you should gitignore) |
+| `forja rules add NAME [flags]` | Add to the catalog (yml only). With `--app X`, also **enables on X and pushes** (sugar) |
+| `forja rules update NAME [flags]` | Patch the yml + **auto-push to every app where the rule is enabled**. `--no-sync` suppresses the push |
+| `forja rules remove NAME` | Delete from yml + **auto-push to every app where it was enabled** + drop the entry from every app in `status.json`. `--no-sync` suppresses the push |
+| `forja apply --app X --enable a,b [--disable c]` | Patch `status.json[X]` and push (one of `--enable`/`--disable` is required) |
+| `forja sync [--app X]` | **Read-only on `status.json`.** Re-push the current effective rule set to every app with a status entry (or just X). Use this after hand-editing the yml to make the change visible on the device |
+| `forja rules` | TUI: (1) list debuggable apps on the device → (2) pick one → (3) show the rule list with per-app toggles → q to push |
+| `forja rules --app X` | TUI: skip the picker and jump straight to the rule list for X |
+| `forja off --app X` | Turn off every rewrite on X (other apps untouched) |
+| `forja alias set NAME APP_ID` | Register a short name to use anywhere `--app` is accepted (writes to `forja/aliases.local.yml` — a personal file you should gitignore) |
 | `forja alias rm NAME` | Delete an alias |
 | `forja alias list` | List registered aliases |
 
-Every command that accepts `--pkg` **takes either an alias or a full package name**. Unknown inputs pass through as literal package names, so things still work when no alias is set:
+Every command that accepts `--app` **takes either an alias or a full applicationId**. Unknown inputs pass through as literal applicationIds, so things still work when no alias is set:
 
 ```bash
 forja alias set dev com.tkhskt.forja.sample
-forja apply --pkg dev --enable teapot         # "dev" resolves to com.tkhskt.forja.sample
-forja apply --pkg com.acme.plugin --enable y  # unknown alias → treated as a literal pkg
+forja apply --app dev --enable teapot         # "dev" resolves to com.tkhskt.forja.sample
+forja apply --app com.acme.plugin --enable y  # unknown alias → treated as a literal applicationId
 ```
 
 ---
@@ -100,7 +100,7 @@ forja apply --pkg com.acme.plugin --enable y  # unknown alias → treated as a l
 ## Shared flags on `rules add / update`
 
 ```
---pkg        sugar: after editing yml, also enable on the given pkg and push
+--app        sugar: after editing yml, also enable on the given app and push
              (when omitted, only the yml is touched)
 --host       match: exact HTTP host
 --path       match: substring of encoded path
@@ -136,7 +136,7 @@ When the same rule name appears in both project and local scopes (= shadow):
 
 ### `forja/rules.yml` / `forja/rules.local.yml`
 
-Same schema in both files. The yml holds **no package field and no `enabled` field** — it's a pure rule catalog:
+Same schema in both files. The yml holds **no applicationId field and no `enabled` field** — it's a pure rule catalog:
 
 ```yaml
 rules:
@@ -180,11 +180,11 @@ Only **the first matching rule** in the array is applied (OkHttp interceptor sem
 
 ### `forja/status.json`
 
-> **Don't edit this file by hand.** It's a CLI-managed mirror of what's currently pushed to each device. Manual edits won't reach the device and may be overwritten on the next `forja` invocation. The commands that write it are `forja apply`, the `rules` TUI's save action, `forja off`, `forja rules add --pkg X` (the sugar form), and `forja rules remove`.
+> **Don't edit this file by hand.** It's a CLI-managed mirror of what's currently pushed to each device. Manual edits won't reach the device and may be overwritten on the next `forja` invocation. The commands that write it are `forja apply`, the `rules` TUI's save action, `forja off`, `forja rules add --app X` (the sugar form), and `forja rules remove`.
 >
-> The same warning ships inside the file as a top-level `$comment` key (JSON Schema-style metadata) so anyone opening it in an editor sees it on line 1. Any `$`-prefixed key is silently dropped on load, so the convention is forward-compatible with additional metadata (`$schema` etc.) without forja ever interpreting those entries as package names.
+> The same warning ships inside the file as a top-level `$comment` key (JSON Schema-style metadata) so anyone opening it in an editor sees it on line 1. Any `$`-prefixed key is silently dropped on load, so the convention is forward-compatible with additional metadata (`$schema` etc.) without forja ever interpreting those entries as applicationIds.
 
-The **per-package enabled rule list**: "if `name` is in pkg X's enabled list, the rule is on; otherwise it's off." Two values, no middle ground:
+The **per-app enabled rule list**: "if `name` is in app X.s enabled list, the rule is on; otherwise it's off." Two values, no middle ground:
 
 ```json
 {
@@ -198,7 +198,7 @@ The **per-package enabled rule list**: "if `name` is in pkg X's enabled list, th
 }
 ```
 
-`"enabled": []` (an empty array) means "forja has touched this pkg but nothing is enabled right now" — that's the state right after `forja off --pkg X`. If the pkg key itself is absent, forja has never interacted with that pkg.
+`"enabled": []` (an empty array) means "forja has touched this app but nothing is enabled right now" — that's the state right after `forja off --app X`. If the app key itself is absent, forja has never interacted with that app.
 
 ---
 

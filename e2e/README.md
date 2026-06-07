@@ -5,7 +5,7 @@ Maestro flows + AVD.
 
 Covers the things unit tests (`cd cli && go test ./...`) can't: real-device
 attach, the self-destruct semantics, interceptor injection, and how forja
-behaves when multiple debuggable packages coexist.
+behaves when multiple debuggable apps coexist.
 
 ## Prerequisites
 
@@ -59,7 +59,7 @@ go test -tags e2e -v -run TestCoreBasicRewrite ./...
 | `helpers_extra_test.go` | Fixture copying / inline Maestro flow |
 | `core_test.go` | **The 5 core scenarios** (basic rewrite, self-destruct, kill, off, bodyFile) |
 | `sync_test.go` | **`forja rules` sync-pattern tests** (add/update/remove auto-push, off, PID-change detection, shadow, etc.) |
-| `multipkg_test.go` | **Multi-debuggable-package tests** (dev + staging coexisting, attach isolation, per-package off, per-package toggles of a shared rule) |
+| `multiapp_test.go` | **Multi-debuggable-app tests** (dev + staging coexisting, attach isolation, per-app off, per-app toggles of a shared rule) |
 
 ## TestMain lifecycle
 
@@ -79,7 +79,7 @@ From `e2e/fixtures/app/build.gradle.kts`'s `productFlavors`:
 - `stagingDebug` → `com.tkhskt.forja.sample.staging`
 
 Both share the same source — `MainActivity` plus two buttons (A: singleton,
-B: new client). `TestMain` installs both, so a multi-package debuggable
+B: new client). `TestMain` installs both, so a multi-app debuggable
 environment exists by default.
 
 > The fixture app is e2e-only. If you want to fork it for manual
@@ -143,8 +143,8 @@ Out of scope for now.
   / bodyFile
 - **sync**: auto-push for add/update/remove, off, PID-change detection,
   project/user shadow
-- **multipkg**: dev + staging operated simultaneously, attach isolation,
-  per-package off, per-package toggles on a shared rule
+- **multiapp**: dev + staging operated simultaneously, attach isolation,
+  per-app off, per-app toggles on a shared rule
 
 TUI automation (the bubbletea / teatest layer) and parallel-device CI
 support are intentionally out of scope.

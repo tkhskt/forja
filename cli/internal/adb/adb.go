@@ -56,36 +56,36 @@ func New() *ADB { return &ADB{exec: defaultExecutor{}} }
 // NewWithExecutor returns an ADB backed by the given Executor (use for tests).
 func NewWithExecutor(e Executor) *ADB { return &ADB{exec: e} }
 
-// packagePattern restricts inputs to valid Android package shapes so we can
-// safely interpolate them into shell strings.
-var packagePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+$`)
+// appIdPattern restricts inputs to valid Android applicationId shapes so we
+// can safely interpolate them into shell strings.
+var appIdPattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+$`)
 
-// ValidatePackage returns an error if name is not a recognizable Android
-// package identifier. Callers that interpolate the package into a shell line
-// MUST validate first.
-func ValidatePackage(name string) error {
-	if !packagePattern.MatchString(name) {
-		return fmt.Errorf("invalid package name: %q", name)
+// ValidateApp returns an error if name is not a recognizable Android
+// applicationId. Callers that interpolate the value into a shell line MUST
+// validate first.
+func ValidateApp(name string) error {
+	if !appIdPattern.MatchString(name) {
+		return fmt.Errorf("invalid applicationId: %q", name)
 	}
 	return nil
 }
 
-// RunAsWrite writes `data` to /data/data/<pkg>/<remoteRel> on the device
+// RunAsWrite writes `data` to /data/data/<app>/<remoteRel> on the device
 // and chmods the result to 400. The whole sequence is forwarded as a single
 // shell line so the inner quoting survives adb argv joining.
 //
 // chmod 400 is required because the device side may pass the file through
 // ART integrity checks that reject anything with the write bit set. rm -f
 // beforehand handles the case where a prior run left a read-only file.
-func (a *ADB) RunAsWrite(ctx context.Context, pkg, remoteRel string, data []byte) error {
-	if err := ValidatePackage(pkg); err != nil {
+func (a *ADB) RunAsWrite(ctx context.Context, app, remoteRel string, data []byte) error {
+	if err := ValidateApp(app); err != nil {
 		return err
 	}
 	inner := fmt.Sprintf(
 		"mkdir -p $(dirname %s) && rm -f %s && cat > %s && chmod 400 %s",
 		remoteRel, remoteRel, remoteRel, remoteRel,
 	)
-	line := fmt.Sprintf("run-as %s sh -c '%s'", pkg, inner)
+	line := fmt.Sprintf("run-as %s sh -c '%s'", app, inner)
 	_, stderr, err := a.exec.RunWithStdin(ctx, data, "adb", "shell", line)
 	if err != nil {
 		return fmt.Errorf("run-as write %s: %s: %w", remoteRel,
@@ -94,14 +94,14 @@ func (a *ADB) RunAsWrite(ctx context.Context, pkg, remoteRel string, data []byte
 	return nil
 }
 
-// RunAsRead reads /data/data/<pkg>/<remoteRel> and returns its contents.
+// RunAsRead reads /data/data/<app>/<remoteRel> and returns its contents.
 // A missing file returns (nil, nil) so callers can treat absence as a normal
 // state without inspecting error strings.
-func (a *ADB) RunAsRead(ctx context.Context, pkg, remoteRel string) ([]byte, error) {
-	if err := ValidatePackage(pkg); err != nil {
+func (a *ADB) RunAsRead(ctx context.Context, app, remoteRel string) ([]byte, error) {
+	if err := ValidateApp(app); err != nil {
 		return nil, err
 	}
-	line := fmt.Sprintf("run-as %s cat %s 2>/dev/null; true", pkg, remoteRel)
+	line := fmt.Sprintf("run-as %s cat %s 2>/dev/null; true", app, remoteRel)
 	stdout, _, err := a.exec.Run(ctx, "adb", "shell", line)
 	if err != nil {
 		return nil, fmt.Errorf("run-as read %s: %w", remoteRel, err)
@@ -112,12 +112,12 @@ func (a *ADB) RunAsRead(ctx context.Context, pkg, remoteRel string) ([]byte, err
 	return stdout, nil
 }
 
-// RunAsRemove deletes /data/data/<pkg>/<remoteRel>. Missing files do not error.
-func (a *ADB) RunAsRemove(ctx context.Context, pkg, remoteRel string) error {
-	if err := ValidatePackage(pkg); err != nil {
+// RunAsRemove deletes /data/data/<app>/<remoteRel>. Missing files do not error.
+func (a *ADB) RunAsRemove(ctx context.Context, app, remoteRel string) error {
+	if err := ValidateApp(app); err != nil {
 		return err
 	}
-	line := fmt.Sprintf("run-as %s rm -f %s", pkg, remoteRel)
+	line := fmt.Sprintf("run-as %s rm -f %s", app, remoteRel)
 	_, stderr, err := a.exec.Run(ctx, "adb", "shell", line)
 	if err != nil {
 		return fmt.Errorf("run-as rm: %s: %w",
@@ -129,11 +129,11 @@ func (a *ADB) RunAsRemove(ctx context.Context, pkg, remoteRel string) error {
 // Pidof returns the PID of the named process, or 0 if it's not running.
 // On most Android shells `pidof` is available; we don't fall back further
 // because every caller already handles 0 as "not running".
-func (a *ADB) Pidof(ctx context.Context, pkg string) (int, error) {
-	if err := ValidatePackage(pkg); err != nil {
+func (a *ADB) Pidof(ctx context.Context, app string) (int, error) {
+	if err := ValidateApp(app); err != nil {
 		return 0, err
 	}
-	stdout, _, err := a.exec.Run(ctx, "adb", "shell", "pidof", pkg)
+	stdout, _, err := a.exec.Run(ctx, "adb", "shell", "pidof", app)
 	if err != nil {
 		// pidof exits non-zero when not found
 		return 0, nil
@@ -168,39 +168,39 @@ func (a *ADB) PrimaryABI(ctx context.Context) (string, error) {
 // latter truncates at 16 bytes on some kernels.
 //
 // Trailing `; true` is critical: the while-read pipeline's last iteration
-// may end on a non-debuggable package, which would make run-as exit 1 and
+// may end on a non-debuggable app, which would make run-as exit 1 and
 // poison the pipeline's exit code. We rely on stdout content, not exit code.
 const listDebugScript = `for d in /proc/[0-9]*; do tr -d '\0' < $d/cmdline 2>/dev/null; echo; done | grep -E '^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+$' | sort -u | while read p; do run-as "$p" true 2>/dev/null && echo "$p"; done; true`
 
-// ListDebuggablePackages enumerates running app processes whose package is
+// ListDebuggableApps enumerates running app processes whose applicationId is
 // debuggable (= run-as works against them).
-func (a *ADB) ListDebuggablePackages(ctx context.Context) ([]string, error) {
+func (a *ADB) ListDebuggableApps(ctx context.Context) ([]string, error) {
 	stdout, _, _ := a.exec.Run(ctx, "adb", "shell", listDebugScript)
-	var pkgs []string
+	var apps []string
 	for _, line := range strings.Split(string(stdout), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		if err := ValidatePackage(line); err != nil {
+		if err := ValidateApp(line); err != nil {
 			// Defensive: should not happen given the grep, but skip anything
-			// that doesn't look like a package rather than poison the list.
+			// that doesn't look like an applicationId rather than poison the list.
 			continue
 		}
-		pkgs = append(pkgs, line)
+		apps = append(apps, line)
 	}
-	return pkgs, nil
+	return apps, nil
 }
 
-// foregroundActivityRE matches "<pkg>/<.Activity>" inside dumpsys lines.
+// foregroundActivityRE matches "<app>/<.Activity>" inside dumpsys lines.
 // The pattern is intentionally loose because dumpsys formatting varies by
 // Android version (mResumedActivity / topResumedActivity / etc.).
 var foregroundActivityRE = regexp.MustCompile(`\s([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)+)/`)
 
-// ForegroundPackage returns the currently-foreground package, or "" if
+// ForegroundApp returns the currently-foreground applicationId, or "" if
 // nothing matches (e.g. lock screen, or dumpsys text changed shape).
-// Used to highlight a sensible default in the package picker.
-func (a *ADB) ForegroundPackage(ctx context.Context) (string, error) {
+// Used to highlight a sensible default in the app picker.
+func (a *ADB) ForegroundApp(ctx context.Context) (string, error) {
 	stdout, _, err := a.exec.Run(ctx, "adb", "shell",
 		"dumpsys activity activities | grep -E 'ResumedActivity' | tail -1")
 	if err != nil {
@@ -216,15 +216,15 @@ func (a *ADB) ForegroundPackage(ctx context.Context) (string, error) {
 // AttachAgent invokes the JVMTI attach mechanism.
 //
 // soPath and dexPath are absolute device paths
-// (typically /data/data/<pkg>/files/...). The single `<so>=<dex>` argument is
+// (typically /data/data/<app>/files/...). The single `<so>=<dex>` argument is
 // the JVMTI agent options string our agent.cpp parses for the bundle DEX path.
-func (a *ADB) AttachAgent(ctx context.Context, pkg, soPath, dexPath string) error {
-	if err := ValidatePackage(pkg); err != nil {
+func (a *ADB) AttachAgent(ctx context.Context, app, soPath, dexPath string) error {
+	if err := ValidateApp(app); err != nil {
 		return err
 	}
 	arg := fmt.Sprintf("%s=%s", soPath, dexPath)
 	stdout, stderr, err := a.exec.Run(ctx, "adb", "shell",
-		"cmd", "activity", "attach-agent", pkg, arg)
+		"cmd", "activity", "attach-agent", app, arg)
 	if err != nil {
 		return fmt.Errorf("attach-agent: %s: %w",
 			strings.TrimSpace(string(stderr)), err)

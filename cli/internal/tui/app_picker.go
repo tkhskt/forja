@@ -1,4 +1,4 @@
-// pkg_picker.go is the bubbletea model for selecting a target package before
+// app_picker.go is the bubbletea model for selecting a target package before
 // the rules view. It shows the device-detected debuggable package list and
 // returns the chosen one (or a cancellation) on exit.
 package tui
@@ -9,42 +9,42 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// PkgPickerModel is a single-select list over debuggable packages discovered
+// AppPickerModel is a single-select list over debuggable packages discovered
 // on the device. Aliases (when supplied) are appended to each row's label
 // for orientation; the selection result is always the literal package name.
-type PkgPickerModel struct {
-	pkgs      []string
-	aliases   map[string][]string // pkg → its registered aliases (display only)
+type AppPickerModel struct {
+	apps      []string
+	aliases   map[string][]string // app → its registered aliases (display only)
 	cursor    int
 	selected  string
 	cancelled bool
 	quitting  bool
 }
 
-// NewPkgPickerModel constructs a picker over the given package list. Callers
+// NewAppPickerModel constructs a picker over the given package list. Callers
 // should query adb.ListDebuggablePackages first; an empty list still renders
 // (with a hint message) so the user gets a clear error rather than a blank
 // session.
 //
-// aliasesByPkg is optional. When supplied, each entry's value is rendered as
+// aliasesByApp is optional. When supplied, each entry's value is rendered as
 // a "(name1, name2)" hint after the package name. Pass nil to render the
 // raw package list with no annotations.
-func NewPkgPickerModel(pkgs []string, aliasesByPkg map[string][]string) PkgPickerModel {
-	return PkgPickerModel{
-		pkgs:    append([]string(nil), pkgs...),
-		aliases: aliasesByPkg,
+func NewAppPickerModel(apps []string, aliasesByApp map[string][]string) AppPickerModel {
+	return AppPickerModel{
+		apps:    append([]string(nil), apps...),
+		aliases: aliasesByApp,
 	}
 }
 
-// Result returns the chosen pkg and whether a real selection was made. False
+// Result returns the chosen app and whether a real selection was made. False
 // means the user pressed q/esc/ctrl+c to cancel.
-func (m PkgPickerModel) Result() (string, bool) {
+func (m AppPickerModel) Result() (string, bool) {
 	return m.selected, !m.cancelled && m.selected != ""
 }
 
-func (m PkgPickerModel) Init() tea.Cmd { return nil }
+func (m AppPickerModel) Init() tea.Cmd { return nil }
 
-func (m PkgPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m AppPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -53,22 +53,22 @@ func (m PkgPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "up", "k":
-			if len(m.pkgs) > 0 {
-				m.cursor = (m.cursor - 1 + len(m.pkgs)) % len(m.pkgs)
+			if len(m.apps) > 0 {
+				m.cursor = (m.cursor - 1 + len(m.apps)) % len(m.apps)
 			}
 		case "down", "j":
-			if len(m.pkgs) > 0 {
-				m.cursor = (m.cursor + 1) % len(m.pkgs)
+			if len(m.apps) > 0 {
+				m.cursor = (m.cursor + 1) % len(m.apps)
 			}
 		case "home":
 			m.cursor = 0
 		case "end":
-			if len(m.pkgs) > 0 {
-				m.cursor = len(m.pkgs) - 1
+			if len(m.apps) > 0 {
+				m.cursor = len(m.apps) - 1
 			}
 		case "enter":
-			if len(m.pkgs) > 0 {
-				m.selected = m.pkgs[m.cursor]
+			if len(m.apps) > 0 {
+				m.selected = m.apps[m.cursor]
 				m.quitting = true
 				return m, tea.Quit
 			}
@@ -77,21 +77,21 @@ func (m PkgPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m PkgPickerModel) View() string {
+func (m AppPickerModel) View() string {
 	if m.quitting {
 		return ""
 	}
 	header := titleStyle.Render("forja rules — select target package")
 	help := dimStyle.Render("↑↓ select   enter confirm   q cancel")
-	if len(m.pkgs) == 0 {
+	if len(m.apps) == 0 {
 		empty := dimStyle.Render(
 			"(no debuggable packages running on device — launch a debug-built app first)")
 		return header + "\n\n" + empty + "\n\n" + help + "\n"
 	}
 	body := ""
-	for i, pkg := range m.pkgs {
-		line := "  " + pkg
-		if alts := m.aliases[pkg]; len(alts) > 0 {
+	for i, app := range m.apps {
+		line := "  " + app
+		if alts := m.aliases[app]; len(alts) > 0 {
 			line += dimStyle.Render(fmt.Sprintf("  (%s)", joinAliases(alts)))
 		}
 		if i == m.cursor {

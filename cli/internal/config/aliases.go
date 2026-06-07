@@ -1,8 +1,8 @@
 // aliases.go owns the on-disk shape of forja/aliases.local.yml — a personal
-// (intended to be gitignored) map of short alias names to fully-qualified Android package
-// names. Anywhere a forja CLI flag accepts a `--pkg`, the value is first
-// passed through this map; missing entries fall through to literal package
-// names so unaliased usage stays unchanged.
+// (intended to be gitignored) map of short alias names to fully-qualified
+// Android applicationIds. Anywhere a forja CLI flag accepts an `--app`, the
+// value is first passed through this map; missing entries fall through to
+// literal applicationIds so unaliased usage stays unchanged.
 package config
 
 import (
@@ -20,7 +20,7 @@ import (
 const DefaultAliasesPath = "forja/aliases.local.yml"
 
 // Aliases is the parsed alias map. Keys are short names ("dev", "staging");
-// values are the full Android package names they expand to.
+// values are the full Android applicationIds they expand to.
 //
 // On-disk shape is wrapped in an `aliases:` key so the file is
 // self-documenting and we can add per-entry metadata later without breaking
@@ -36,13 +36,13 @@ type aliasesFile struct {
 	Aliases Aliases `yaml:"aliases"`
 }
 
-// Resolve returns the package name for the given input. If input matches an
+// Resolve returns the applicationId for the given input. If input matches an
 // alias key the mapped value is returned; otherwise input is returned
-// unchanged. This lets the resolver be inserted anywhere `--pkg` is read
+// unchanged. This lets the resolver be inserted anywhere `--app` is read
 // without forcing the caller to care whether the user typed an alias.
 func (a Aliases) Resolve(input string) string {
-	if pkg, ok := a[input]; ok {
-		return pkg
+	if app, ok := a[input]; ok {
+		return app
 	}
 	return input
 }
@@ -58,12 +58,12 @@ func (a Aliases) SortedKeys() []string {
 	return out
 }
 
-// AliasesFor returns the alias names that point at pkg. Multiple aliases for
-// the same pkg is allowed (e.g. both `dev` and `main`).
-func (a Aliases) AliasesFor(pkg string) []string {
+// AliasesFor returns the alias names that point at app. Multiple aliases for
+// the same app is allowed (e.g. both `dev` and `main`).
+func (a Aliases) AliasesFor(app string) []string {
 	out := make([]string, 0)
 	for k, v := range a {
-		if v == pkg {
+		if v == app {
 			out = append(out, k)
 		}
 	}

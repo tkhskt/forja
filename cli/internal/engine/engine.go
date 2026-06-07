@@ -21,13 +21,13 @@ import (
 	"github.com/tkhskt/forja/internal/config"
 )
 
-// RemoteRulesRel is the path under /data/data/<pkg>/ where the runtime expects
+// RemoteRulesRel is the path under /data/data/<app>/ where the runtime expects
 // to find rules.json. The agent reads this on attach and then deletes it.
 const RemoteRulesRel = "files/rules.json"
 
 // ErrAppNotRunning is returned by EnsureAttached (and surfaces from Push /
-// PushEffective / Off) when the target package's process is absent from the
-// device. Callers that iterate multiple packages (e.g. rules.Update's
+// PushEffective / Off) when the target app's process is absent from the
+// device. Callers that iterate multiple apps (e.g. rules.Update's
 // auto-propagation) use errors.Is(err, ErrAppNotRunning) to warn-and-continue
 // rather than abort the whole operation.
 var ErrAppNotRunning = errors.New("app not running on device")
@@ -122,25 +122,25 @@ func (e *Engine) now() time.Time {
 //
 // Returns an error if the app isn't running — callers should surface that
 // to the user with the hint "launch the app first".
-func (e *Engine) EnsureAttached(ctx context.Context, pkg string) error {
-	pid, err := e.ADB.Pidof(ctx, pkg)
+func (e *Engine) EnsureAttached(ctx context.Context, app string) error {
+	pid, err := e.ADB.Pidof(ctx, app)
 	if err != nil {
-		return fmt.Errorf("pidof %s: %w", pkg, err)
+		return fmt.Errorf("pidof %s: %w", app, err)
 	}
 	if pid == 0 {
-		return fmt.Errorf("%s: %w — launch the app first", pkg, ErrAppNotRunning)
+		return fmt.Errorf("%s: %w — launch the app first", app, ErrAppNotRunning)
 	}
 
-	cached, _ := e.Cache.Load(pkg) // load errors are non-fatal; treat as no cache
+	cached, _ := e.Cache.Load(app) // load errors are non-fatal; treat as no cache
 	decision := attach.ShouldReattach(cached, pid, e.now(), attach.DefaultTTL)
 	if !decision.Reattach {
 		return nil
 	}
 
-	if err := e.attach(ctx, pkg); err != nil {
+	if err := e.attach(ctx, app); err != nil {
 		return err
 	}
-	if err := e.Cache.Save(pkg, pid, e.now()); err != nil {
+	if err := e.Cache.Save(app, pid, e.now()); err != nil {
 		// Saving cache failure is non-fatal: worst case we re-attach next time.
 		// Surface as a warning, not an error.
 		fmt.Fprintf(os.Stderr, "[warn] could not save attach cache: %v\n", err)
@@ -150,7 +150,7 @@ func (e *Engine) EnsureAttached(ctx context.Context, pkg string) error {
 
 // attach copies the agent .so/.dex to the app's data dir and invokes the
 // JVMTI attach. Each call is independent — no caching here.
-func (e *Engine) attach(ctx context.Context, pkg string) error {
+func (e *Engine) attach(ctx context.Context, app string) error {
 	abi, err := e.ADB.PrimaryABI(ctx)
 	if err != nil {
 		return err
@@ -167,68 +167,68 @@ func (e *Engine) attach(ctx context.Context, pkg string) error {
 	}
 	remoteSoRel := "files/" + AgentSoName
 	remoteDexRel := "files/" + AgentDexName
-	if err := e.ADB.RunAsWrite(ctx, pkg, remoteSoRel, soData); err != nil {
+	if err := e.ADB.RunAsWrite(ctx, app, remoteSoRel, soData); err != nil {
 		return fmt.Errorf("push .so: %w", err)
 	}
-	if err := e.ADB.RunAsWrite(ctx, pkg, remoteDexRel, dexData); err != nil {
+	if err := e.ADB.RunAsWrite(ctx, app, remoteDexRel, dexData); err != nil {
 		return fmt.Errorf("push .dex: %w", err)
 	}
-	remoteSoAbs := "/data/data/" + pkg + "/" + remoteSoRel
-	remoteDexAbs := "/data/data/" + pkg + "/" + remoteDexRel
-	if err := e.ADB.AttachAgent(ctx, pkg, remoteSoAbs, remoteDexAbs); err != nil {
+	remoteSoAbs := "/data/data/" + app + "/" + remoteSoRel
+	remoteDexAbs := "/data/data/" + app + "/" + remoteDexRel
+	if err := e.ADB.AttachAgent(ctx, app, remoteSoAbs, remoteDexAbs); err != nil {
 		return err
 	}
 	return nil
 }
 
-// Push performs the full deploy of a RulesFile to the named package: ensures
-// the agent is live, converts to device JSON, writes /data/data/<pkg>/files/
+// Push performs the full deploy of a RulesFile to the named app: ensures
+// the agent is live, converts to device JSON, writes /data/data/<app>/files/
 // rules.json. The agent reads that file at the next opportunity and deletes
 // it on disk, so this function is effectively "fire and forget" from the CLI
 // side.
-func (e *Engine) Push(ctx context.Context, pkg string, rf *config.RulesFile) error {
-	if pkg == "" {
-		return errors.New("Push requires a non-empty package")
+func (e *Engine) Push(ctx context.Context, app string, rf *config.RulesFile) error {
+	if app == "" {
+		return errors.New("Push requires a non-empty app")
 	}
-	if err := e.EnsureAttached(ctx, pkg); err != nil {
+	if err := e.EnsureAttached(ctx, app); err != nil {
 		return err
 	}
 	js, err := rf.ToDeviceJSON()
 	if err != nil {
 		return err
 	}
-	if err := e.ADB.RunAsWrite(ctx, pkg, RemoteRulesRel, js); err != nil {
+	if err := e.ADB.RunAsWrite(ctx, app, RemoteRulesRel, js); err != nil {
 		return err
 	}
 	// Record that "push" was the last action so QueryAttachStatus can tell
 	// the TUI that rules are effective (as opposed to being cleared by off).
-	_ = e.Cache.RecordAction(pkg, attach.ActionPush, e.now())
+	_ = e.Cache.RecordAction(app, attach.ActionPush, e.now())
 	return nil
 }
 
 // PushEffective is the project/user/status-aware variant of Push. It takes the
 // already-merged effective rule list from rules.LoadEffective rather than a
 // raw RulesFile, so the engine doesn't need to know about scopes.
-func (e *Engine) PushEffective(ctx context.Context, pkg string, eff []config.EffectiveRule) error {
-	if pkg == "" {
-		return errors.New("PushEffective requires a non-empty package")
+func (e *Engine) PushEffective(ctx context.Context, app string, eff []config.EffectiveRule) error {
+	if app == "" {
+		return errors.New("PushEffective requires a non-empty app")
 	}
-	if err := e.EnsureAttached(ctx, pkg); err != nil {
+	if err := e.EnsureAttached(ctx, app); err != nil {
 		return err
 	}
 	js, err := config.EffectiveToDeviceJSON(eff)
 	if err != nil {
 		return err
 	}
-	if err := e.ADB.RunAsWrite(ctx, pkg, RemoteRulesRel, js); err != nil {
+	if err := e.ADB.RunAsWrite(ctx, app, RemoteRulesRel, js); err != nil {
 		return err
 	}
-	_ = e.Cache.RecordAction(pkg, attach.ActionPush, e.now())
+	_ = e.Cache.RecordAction(app, attach.ActionPush, e.now())
 	return nil
 }
 
 // AttachStatusKind enumerates how forja sees the current attach situation
-// for a given package. Used by the TUI to render the device status line.
+// for a given app. Used by the TUI to render the device status line.
 type AttachStatusKind int
 
 const (
@@ -285,15 +285,15 @@ func (s AttachStatus) Live() bool { return s.Kind == StatusAgentLive }
 // QueryAttachStatus does the PID baseline comparison without performing any
 // attach. Read-only and fast (just `adb shell pidof`), so it's safe to call
 // on every TUI open.
-func (e *Engine) QueryAttachStatus(ctx context.Context, pkg string) AttachStatus {
-	pid, err := e.ADB.Pidof(ctx, pkg)
+func (e *Engine) QueryAttachStatus(ctx context.Context, app string) AttachStatus {
+	pid, err := e.ADB.Pidof(ctx, app)
 	if err != nil {
 		return AttachStatus{Kind: StatusUnknown, Err: err}
 	}
 	if pid == 0 {
 		return AttachStatus{Kind: StatusAppNotRunning}
 	}
-	cached, _ := e.Cache.Load(pkg)
+	cached, _ := e.Cache.Load(app)
 	if cached == nil {
 		return AttachStatus{Kind: StatusNoAttachRecord, CurrentPid: pid}
 	}
@@ -311,16 +311,16 @@ func (e *Engine) QueryAttachStatus(ctx context.Context, pkg string) AttachStatus
 
 // Off writes an empty rule array to the device, effectively pausing all
 // rewrites without removing local rules.yml.
-func (e *Engine) Off(ctx context.Context, pkg string) error {
-	if pkg == "" {
-		return errors.New("Off requires a non-empty package")
+func (e *Engine) Off(ctx context.Context, app string) error {
+	if app == "" {
+		return errors.New("Off requires a non-empty app")
 	}
-	if err := e.EnsureAttached(ctx, pkg); err != nil {
+	if err := e.EnsureAttached(ctx, app); err != nil {
 		return err
 	}
-	if err := e.ADB.RunAsWrite(ctx, pkg, RemoteRulesRel, []byte("[]\n")); err != nil {
+	if err := e.ADB.RunAsWrite(ctx, app, RemoteRulesRel, []byte("[]\n")); err != nil {
 		return err
 	}
-	_ = e.Cache.RecordAction(pkg, attach.ActionOff, e.now())
+	_ = e.Cache.RecordAction(app, attach.ActionOff, e.now())
 	return nil
 }

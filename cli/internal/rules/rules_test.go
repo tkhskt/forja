@@ -33,7 +33,7 @@ func TestAddYmlOnlyByDefault(t *testing.T) {
 		t.Errorf("user file unexpected: %+v", rf)
 	}
 	// Status.json should NOT be created for a plain add — the rule is off
-	// on every package until explicitly enabled.
+	// on every app until explicitly enabled.
 	st, _ := config.LoadStatus(p.Status)
 	if len(st) != 0 {
 		t.Errorf("status.json should be empty after plain Add, got: %+v", st)
@@ -212,12 +212,12 @@ func TestDisableIgnoresUnknownRuleNames(t *testing.T) {
 	}
 }
 
-func TestClearPkgEmptiesEnabledList(t *testing.T) {
+func TestClearAppEmptiesEnabledList(t *testing.T) {
 	p := pathsIn(t)
 	_ = Add(p, ScopeLocal, AddOptions{Name: "foo"})
 	_ = Enable(p, "com.x", []string{"foo"})
-	if err := ClearPkg(p, "com.x"); err != nil {
-		t.Fatalf("ClearPkg: %v", err)
+	if err := ClearApp(p, "com.x"); err != nil {
+		t.Fatalf("ClearApp: %v", err)
 	}
 	st, _ := config.LoadStatus(p.Status)
 	if st.IsEnabled("com.x", "foo") {
@@ -225,15 +225,15 @@ func TestClearPkgEmptiesEnabledList(t *testing.T) {
 	}
 }
 
-func TestSetEnabledForPkgOverwrites(t *testing.T) {
+func TestSetEnabledForAppOverwrites(t *testing.T) {
 	p := pathsIn(t)
 	_ = Add(p, ScopeLocal, AddOptions{Name: "a"})
 	_ = Add(p, ScopeLocal, AddOptions{Name: "b"})
 	_ = Add(p, ScopeLocal, AddOptions{Name: "c"})
 	_ = Enable(p, "com.x", []string{"a", "b"})
 	// Overwrite with a new set — b should go away, c should appear.
-	if err := SetEnabledForPkg(p, "com.x", []string{"a", "c"}); err != nil {
-		t.Fatalf("SetEnabledForPkg: %v", err)
+	if err := SetEnabledForApp(p, "com.x", []string{"a", "c"}); err != nil {
+		t.Fatalf("SetEnabledForApp: %v", err)
 	}
 	st, _ := config.LoadStatus(p.Status)
 	if !st.IsEnabled("com.x", "a") || !st.IsEnabled("com.x", "c") {
@@ -244,7 +244,7 @@ func TestSetEnabledForPkgOverwrites(t *testing.T) {
 	}
 }
 
-func TestLoadEffectiveMergesAndOverridesPerPkg(t *testing.T) {
+func TestLoadEffectiveMergesAndOverridesPerApp(t *testing.T) {
 	p := pathsIn(t)
 	_ = Add(p, ScopeProject, AddOptions{Name: "team-a", Status: 200})
 	_ = Add(p, ScopeProject, AddOptions{Name: "team-b", Status: 200})
@@ -377,10 +377,10 @@ func TestLoadStatusReturnsCurrentState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadStatus: %v", err)
 	}
-	pkgs := st.PkgsEnabling("shared")
+	apps := st.AppsEnabling("shared")
 	want := []string{"com.a", "com.b"}
-	if !reflect.DeepEqual(pkgs, want) {
-		t.Errorf("PkgsEnabling: want %v, got %v", want, pkgs)
+	if !reflect.DeepEqual(apps, want) {
+		t.Errorf("AppsEnabling: want %v, got %v", want, apps)
 	}
 }
 
@@ -394,7 +394,7 @@ func TestResolveAliasExpandsAndPassesThrough(t *testing.T) {
 	if got, _ := ResolveAlias(p, "dev"); got != "com.tkhskt.forja.sample" {
 		t.Errorf("dev should resolve, got %q", got)
 	}
-	// Unknown name passes through so literal pkg names keep working.
+	// Unknown name passes through so literal applicationIds keep working.
 	if got, _ := ResolveAlias(p, "com.something"); got != "com.something" {
 		t.Errorf("unknown should pass through, got %q", got)
 	}
@@ -406,7 +406,7 @@ func TestResolveAliasExpandsAndPassesThrough(t *testing.T) {
 
 func TestResolveAliasWithNoFileWorks(t *testing.T) {
 	// No aliases file at all — the resolver should silently treat every
-	// input as a literal pkg.
+	// input as a literal applicationId.
 	p := pathsIn(t)
 	got, err := ResolveAlias(p, "com.x")
 	if err != nil {

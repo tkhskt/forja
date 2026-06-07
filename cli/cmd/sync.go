@@ -10,8 +10,8 @@ import (
 )
 
 // newSyncCmd implements `forja sync` — re-push the current effective rule
-// set to every package that already has a status.json entry (or just one
-// when --pkg is given).
+// set to every app that already has a status.json entry (or just one
+// when --app is given).
 //
 // The intended workflow is: hand-edit forja/rules.yml or rules.local.yml
 // (tweak a body, change a status code, add a header), then run `forja sync`
@@ -20,25 +20,25 @@ import (
 // CLI command that happens to push (e.g. `rules update <name>` as a no-op).
 //
 // `sync` is strictly read-only on status.json. To flip which rules are
-// enabled, use `forja apply` (or the TUI). To clear a package, use
+// enabled, use `forja apply` (or the TUI). To clear an app, use
 // `forja off`.
 func newSyncCmd() *cobra.Command {
-	var pkg string
+	var app string
 	c := &cobra.Command{
-		Use:   "sync [--pkg PKG]",
-		Short: "Re-push the current effective rule set to every enabled package (or one)",
+		Use:   "sync [--app APP]",
+		Short: "Re-push the current effective rule set to every enabled app (or one)",
 		Long: `forja sync re-reads forja/rules.yml + rules.local.yml + status.json and
-pushes the resulting effective rule set to every package that already has a
+pushes the resulting effective rule set to every app that already has a
 status.json entry. Use this after hand-editing the yml to make the change
 visible on the device.
 
 Examples:
 
-  forja sync                # sync every package with a status.json entry
-  forja sync --pkg dev      # only the package "dev" (alias or full name)
+  forja sync                # sync every app with a status.json entry
+  forja sync --app dev      # only the app "dev" (alias or full name)
 
 sync NEVER writes status.json — it only reads. To flip which rules are
-enabled use 'forja apply'; to clear a package use 'forja off'.`,
+enabled use 'forja apply'; to clear an app use 'forja off'.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			paths := rulesPaths()
 			st, err := rules.LoadStatus(paths)
@@ -47,14 +47,14 @@ enabled use 'forja apply'; to clear a package use 'forja off'.`,
 			}
 
 			var targets []string
-			if pkg != "" {
-				resolved, err := resolvePkg(pkg)
+			if app != "" {
+				resolved, err := resolveApp(app)
 				if err != nil {
 					return err
 				}
 				if _, exists := st[resolved]; !exists {
 					return fmt.Errorf(
-						"no status.json entry for %s — use `forja apply --pkg %s --enable …` first",
+						"no status.json entry for %s — use `forja apply --app %s --enable …` first",
 						resolved, resolved,
 					)
 				}
@@ -68,9 +68,9 @@ enabled use 'forja apply'; to clear a package use 'forja off'.`,
 				}
 				sort.Strings(targets)
 			}
-			return pushToPkgs(targets, "sync")
+			return pushToApps(targets, "sync")
 		},
 	}
-	c.Flags().StringVar(&pkg, "pkg", "", "limit sync to this package (or alias)")
+	c.Flags().StringVar(&app, "app", "", "limit sync to this app (or alias)")
 	return c
 }

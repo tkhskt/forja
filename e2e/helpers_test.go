@@ -127,7 +127,7 @@ func adbShellAllowingFailure(t *testing.T, line string) (string, error) {
 	return runCmd(t, true, "adb", "shell", line)
 }
 
-// pidof returns the PID of the named package process, or 0 if not running.
+// pidof returns the PID of the named app process, or 0 if not running.
 func pidof(t *testing.T, pkg string) int {
 	t.Helper()
 	out, _ := adbShellAllowingFailure(t, "pidof "+pkg)
@@ -149,7 +149,7 @@ func forceStop(t *testing.T, pkg string) {
 	_, _ = adbShellAllowingFailure(t, "am force-stop "+pkg)
 }
 
-// startMainActivity launches the package's MainActivity. Waits briefly for
+// startMainActivity launches the app's MainActivity. Waits briefly for
 // the process to come up.
 //
 // Both fixture-app flavors (dev / staging) share the same source, so the
@@ -276,7 +276,7 @@ func maestroFlow(t *testing.T, name string) string {
 // --- forja state helpers -----------------------------------------------
 
 // resetForjaState wipes ./forja/ in repo root and the attach cache for the
-// given packages. Call this at the start of each test for hermetic state.
+// given apps. Call this at the start of each test for hermetic state.
 func resetForjaState(t *testing.T, pkgs ...string) {
 	t.Helper()
 	_ = os.RemoveAll(filepath.Join(repoRoot, "forja"))
@@ -463,15 +463,15 @@ func installSampleApps() error {
 	return nil
 }
 
-// --- package-name constants -------------------------------------------
+// --- app constants -------------------------------------------
 
 const (
-	PkgDev     = "com.tkhskt.forja.sample"
-	PkgStaging = "com.tkhskt.forja.sample.staging"
-	// PkgOk5Dev is the OkHttp 5.x variant of the fixture app. It targets
+	AppDev     = "com.tkhskt.forja.sample"
+	AppStaging = "com.tkhskt.forja.sample.staging"
+	// AppOk5Dev is the OkHttp 5.x variant of the fixture app. It targets
 	// `installOk5DevDebug` and is used to verify forja still rewrites
 	// responses correctly against OkHttp 5.
-	PkgOk5Dev = "com.tkhskt.forja.sample.ok5"
+	AppOk5Dev = "com.tkhskt.forja.sample.ok5"
 )
 
 // Ensure runtime is imported so the linter doesn't strip it when no test

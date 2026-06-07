@@ -44,11 +44,11 @@ func TestAliasesResolveUnknownPassThrough(t *testing.T) {
 	if got := a.Resolve("dev"); got != "com.tkhskt.forja.sample" {
 		t.Errorf("alias not resolved: %q", got)
 	}
-	// Unknown input must pass through untouched so literal pkg names keep working.
+	// Unknown input must pass through untouched so literal applicationIds keep working.
 	if got := a.Resolve("com.something.else"); got != "com.something.else" {
 		t.Errorf("unknown input should pass through: got %q", got)
 	}
-	// Empty input → empty (caller may use this as "no pkg" signal).
+	// Empty input → empty (caller may use this as "no app" signal).
 	if got := a.Resolve(""); got != "" {
 		t.Errorf("empty should pass through: got %q", got)
 	}

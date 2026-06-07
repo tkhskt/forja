@@ -11,7 +11,7 @@ import (
 )
 
 // newApplyCmd is the non-interactive equivalent of opening `forja rules`,
-// toggling something, and quitting: it patches status.json[pkg].enabled in
+// toggling something, and quitting: it patches status.json[app].enabled in
 // one or both directions and pushes the resulting effective state to the
 // device.
 //
@@ -20,45 +20,45 @@ import (
 // device state", so a no-op apply would have nothing to do.
 func newApplyCmd() *cobra.Command {
 	var (
-		pkg     string
+		app     string
 		enable  []string
 		disable []string
 	)
 	c := &cobra.Command{
-		Use:   "apply --pkg PKG [--enable a,b] [--disable c,d]",
-		Short: "Enable/disable rules on a package and push to the device",
-		Long: `Patch the per-package enabled state in forja/status.json and push the new
+		Use:   "apply --app APP [--enable a,b] [--disable c,d]",
+		Short: "Enable/disable rules on an app and push to the device",
+		Long: `Patch the per-app enabled state in forja/status.json and push the new
 effective rule set to the device.
 
-  forja apply --pkg com.x --enable teapot,dev-mock
-  forja apply --pkg com.x --disable teapot
-  forja apply --pkg com.x --enable teapot --disable dev-mock
+  forja apply --app com.x --enable teapot,dev-mock
+  forja apply --app com.x --disable teapot
+  forja apply --app com.x --enable teapot --disable dev-mock
 
 At least one of --enable / --disable is required; pass --enable to add rule
-names to the package's enabled list, --disable to remove them.
+names to the app's enabled list, --disable to remove them.
 
 Unknown rule names in --enable cause an error (typo guard). Unknown names in
 --disable are silently no-op'd (so you can safely scrub stale entries).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if pkg == "" {
-				return errors.New("--pkg is required")
+			if app == "" {
+				return errors.New("--app is required")
 			}
 			if len(enable) == 0 && len(disable) == 0 {
 				return errors.New("at least one of --enable / --disable is required")
 			}
-			resolvedPkg, err := resolvePkg(pkg)
+			resolvedApp, err := resolveApp(app)
 			if err != nil {
 				return err
 			}
-			pkg = resolvedPkg
+			app = resolvedApp
 			paths := rulesPaths()
 			if len(enable) > 0 {
-				if err := rules.Enable(paths, pkg, enable); err != nil {
+				if err := rules.Enable(paths, app, enable); err != nil {
 					return err
 				}
 			}
 			if len(disable) > 0 {
-				if err := rules.Disable(paths, pkg, disable); err != nil {
+				if err := rules.Disable(paths, app, disable); err != nil {
 					return err
 				}
 			}
@@ -66,11 +66,11 @@ Unknown rule names in --enable cause an error (typo guard). Unknown names in
 			if err != nil {
 				return err
 			}
-			eff, err := rules.LoadEffective(paths, pkg)
+			eff, err := rules.LoadEffective(paths, app)
 			if err != nil {
 				return err
 			}
-			if err := eng.PushEffective(context.Background(), pkg, eff); err != nil {
+			if err := eng.PushEffective(context.Background(), app, eff); err != nil {
 				return err
 			}
 			enabledCount := 0
@@ -79,12 +79,12 @@ Unknown rule names in --enable cause an error (typo guard). Unknown names in
 					enabledCount++
 				}
 			}
-			fmt.Printf("[apply] %s: %d rule(s) enabled, pushed to device\n", pkg, enabledCount)
+			fmt.Printf("[apply] %s: %d rule(s) enabled, pushed to device\n", app, enabledCount)
 			return nil
 		},
 	}
-	c.Flags().StringVar(&pkg, "pkg", "", "target Android package or alias (required)")
-	c.Flags().StringSliceVar(&enable, "enable", nil, "rule names to enable on the package (comma- or repeat-flag)")
-	c.Flags().StringSliceVar(&disable, "disable", nil, "rule names to disable on the package (comma- or repeat-flag)")
+	c.Flags().StringVar(&app, "app", "", "target Android applicationId or alias (required)")
+	c.Flags().StringSliceVar(&enable, "enable", nil, "rule names to enable on the app (comma- or repeat-flag)")
+	c.Flags().StringSliceVar(&disable, "disable", nil, "rule names to disable on the app (comma- or repeat-flag)")
 	return c
 }

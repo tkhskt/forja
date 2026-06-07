@@ -19,7 +19,7 @@ import (
 
 // rulesFlags is the merged set of CLI flags used by add / update / remove.
 type rulesFlags struct {
-	pkg      string
+	app      string
 	host     string
 	path     string
 	status   int
@@ -62,11 +62,11 @@ func scopeFrom(f *rulesFlags) rules.Scope {
 	return rules.ScopeLocal
 }
 
-// resolvePkg expands an alias name to its full Android package, returning
-// the input unchanged when no alias matches (so literal package names keep
-// working). Callers should use this on any `--pkg` flag value before passing
-// it to the engine layer. Empty input returns empty (= "no pkg specified").
-func resolvePkg(input string) (string, error) {
+// resolveApp expands an alias name to its full Android applicationId, returning
+// the input unchanged when no alias matches (so literal applicationIds keep
+// working). Callers should use this on any `--app` flag value before passing
+// it to the engine layer. Empty input returns empty (= "no app specified").
+func resolveApp(input string) (string, error) {
 	if input == "" {
 		return "", nil
 	}
@@ -74,29 +74,29 @@ func resolvePkg(input string) (string, error) {
 }
 
 func newRulesCmd() *cobra.Command {
-	var pkg string
+	var app string
 	c := &cobra.Command{
 		Use:   "rules",
 		Short: "Manage forja rules (TUI by default; add / update / remove available as subcommands)",
 		Long: `Without a subcommand, opens a TUI:
 
-  1. lists debuggable packages currently on the device,
+  1. lists debuggable apps currently on the device,
   2. lets you pick one,
-  3. shows the rule catalog with that package's per-rule enabled state.
+  3. shows the rule catalog with that app's per-rule enabled state.
 
 Use ↑↓/jk to navigate, space/enter to toggle enabled, q to push the new
-state to the chosen package and exit.
+state to the chosen app and exit.
 
-  forja rules                       interactive: pick package + edit toggles
-  forja rules --pkg com.x.y         interactive: skip picker, edit toggles for that pkg
+  forja rules                       interactive: pick app + edit toggles
+  forja rules --app com.x.y         interactive: skip picker, edit toggles for that app
   forja rules add NAME ...          append a rule to the catalog (yml only)
-  forja rules update NAME ...       patch an existing rule (auto-applied to enabled packages)
-  forja rules remove NAME           delete a rule (auto-applied to enabled packages)`,
+  forja rules update NAME ...       patch an existing rule (auto-applied to enabled apps)
+  forja rules remove NAME           delete a rule (auto-applied to enabled apps)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRulesTUI(pkg)
+			return runRulesTUI(app)
 		},
 	}
-	c.Flags().StringVar(&pkg, "pkg", "", "skip the package picker and edit toggles for this pkg or alias directly")
+	c.Flags().StringVar(&app, "app", "", "skip the app picker and edit toggles for this app or alias directly")
 	c.AddCommand(newRulesAddCmd())
 	c.AddCommand(newRulesUpdateCmd())
 	c.AddCommand(newRulesRemoveCmd())
@@ -107,19 +107,19 @@ func newRulesAddCmd() *cobra.Command {
 	var f rulesFlags
 	c := &cobra.Command{
 		Use:   "add NAME",
-		Short: "Append a rule to the catalog (use --pkg to also enable+push to a package)",
+		Short: "Append a rule to the catalog (use --app to also enable+push to an app)",
 		Long: `Append a new rule to forja/rules.local.yml (local scope; you should
 gitignore this file) — or to forja/rules.yml (project scope, committed) when
 --project is passed.
 
-By default the new rule is NOT applied to any package. Use 'forja rules'
-(TUI), 'forja apply', or pass --pkg X here to also enable it on X and push.
+By default the new rule is NOT applied to any app. Use 'forja rules'
+(TUI), 'forja apply', or pass --app X here to also enable it on X and push.
 
   forja rules add teapot --host example.com --status 418
       # yml only — pick targets later via TUI or 'forja apply'
 
-  forja rules add teapot --host example.com --status 418 --pkg com.tkhskt.forja.sample
-      # yml + enable on com.tkhskt.forja.sample + push to that package`,
+  forja rules add teapot --host example.com --status 418 --app com.tkhskt.forja.sample
+      # yml + enable on com.tkhskt.forja.sample + push to that app`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("body") && cmd.Flags().Changed("body-file") {
@@ -143,23 +143,23 @@ By default the new rule is NOT applied to any package. Use 'forja rules'
 				return err
 			}
 			fmt.Printf("added rule %q to %s scope\n", args[0], scope)
-			if f.pkg == "" {
+			if f.app == "" {
 				return nil
 			}
-			// Sugar path: enable on the named pkg and push.
-			pkg, err := resolvePkg(f.pkg)
+			// Sugar path: enable on the named app and push.
+			app, err := resolveApp(f.app)
 			if err != nil {
 				return err
 			}
-			if err := rules.Enable(paths, pkg, []string{args[0]}); err != nil {
+			if err := rules.Enable(paths, app, []string{args[0]}); err != nil {
 				return err
 			}
-			return pushToPkg(pkg, "add")
+			return pushToApp(app, "add")
 		},
 	}
 	bindRulesFlags(c, &f)
-	c.Flags().StringVar(&f.pkg, "pkg", "",
-		"also enable the new rule on this package (or alias) and push to the device")
+	c.Flags().StringVar(&f.app, "app", "",
+		"also enable the new rule on this app (or alias) and push to the device")
 	return c
 }
 
@@ -168,18 +168,18 @@ func newRulesUpdateCmd() *cobra.Command {
 	var noSync bool
 	c := &cobra.Command{
 		Use:   "update NAME",
-		Short: "Patch an existing rule (auto-pushes to every package where it's enabled)",
+		Short: "Patch an existing rule (auto-pushes to every app where it's enabled)",
 		Long: `Patch the fields of an existing rule. Only fields you explicitly pass on the
 command line are changed — others stay as they were.
 
 After the yml edit, forja iterates status.json and re-pushes the rule set to
-every package where this rule is currently enabled. Pass --no-sync to skip
+every app where this rule is currently enabled. Pass --no-sync to skip
 the auto-push (yml is still updated).
 
 By default the rule is searched across both scopes (local-wins on shadows).
 Use --project to force the project file even when a local-scope shadow exists.
 
-  forja rules update teapot --status 503    # patch + auto-push to every pkg where teapot is on
+  forja rules update teapot --status 503    # patch + auto-push to every app where teapot is on
   forja rules update teapot --no-sync       # patch yml only`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -223,7 +223,7 @@ Use --project to force the project file even when a local-scope shadow exists.
 			if noSync {
 				return nil
 			}
-			return autoApplyToEnabledPkgs(args[0], "update")
+			return autoApplyToEnabledApps(args[0], "update")
 		},
 	}
 	bindRulesFlags(c, &f)
@@ -236,14 +236,14 @@ func newRulesRemoveCmd() *cobra.Command {
 	var noSync bool
 	c := &cobra.Command{
 		Use:   "remove NAME",
-		Short: "Delete a rule (auto-pushes the new set to every package where it was enabled)",
+		Short: "Delete a rule (auto-pushes the new set to every app where it was enabled)",
 		Long: `Delete a rule. Searches across both scopes (local-wins on shadows). Use
 --project to force removal from the project file when a local-scope shadow
 exists.
 
 After the yml edit, forja iterates status.json and re-pushes the rule set
-(now without the deleted rule) to every package where it was enabled, then
-clears the rule name from every package's enabled list.`,
+(now without the deleted rule) to every app where it was enabled, then
+clears the rule name from every app's enabled list.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			paths := rulesPaths()
@@ -252,13 +252,13 @@ clears the rule name from every package's enabled list.`,
 				s := rules.ScopeProject
 				scopePtr = &s
 			}
-			// Snapshot the pkgs that had this rule enabled BEFORE Remove drops
+			// Snapshot the apps that had this rule enabled BEFORE Remove drops
 			// the status entries, so we know who to re-push to.
 			st, err := rules.LoadStatus(paths)
 			if err != nil {
 				return err
 			}
-			pkgs := st.PkgsEnabling(args[0])
+			apps := st.AppsEnabling(args[0])
 			if err := rules.Remove(paths, args[0], scopePtr); err != nil {
 				return err
 			}
@@ -266,7 +266,7 @@ clears the rule name from every package's enabled list.`,
 			if noSync {
 				return nil
 			}
-			return pushToPkgs(pkgs, "remove")
+			return pushToApps(apps, "remove")
 		},
 	}
 	c.Flags().BoolVar(&project, "project", false,
@@ -275,25 +275,25 @@ clears the rule name from every package's enabled list.`,
 	return c
 }
 
-// autoApplyToEnabledPkgs is the propagation engine used by update. It reads
-// status.json, finds every pkg where the named rule is currently enabled, and
+// autoApplyToEnabledApps is the propagation engine used by update. It reads
+// status.json, finds every app where the named rule is currently enabled, and
 // pushes the (now updated) effective rule set to each of them.
-func autoApplyToEnabledPkgs(name, opLabel string) error {
+func autoApplyToEnabledApps(name, opLabel string) error {
 	paths := rulesPaths()
 	st, err := rules.LoadStatus(paths)
 	if err != nil {
 		return err
 	}
-	pkgs := st.PkgsEnabling(name)
-	return pushToPkgs(pkgs, opLabel)
+	apps := st.AppsEnabling(name)
+	return pushToApps(apps, opLabel)
 }
 
-// pushToPkgs pushes the current effective state to each pkg in turn. Pkgs
+// pushToApps pushes the current effective state to each app in turn. Apps
 // whose app isn't running are skipped with a warning so an unrelated dead
 // app doesn't block the live ones.
-func pushToPkgs(pkgs []string, opLabel string) error {
-	if len(pkgs) == 0 {
-		fmt.Printf("[%s] no enabled package — yml change only\n", opLabel)
+func pushToApps(apps []string, opLabel string) error {
+	if len(apps) == 0 {
+		fmt.Printf("[%s] no enabled app — yml change only\n", opLabel)
 		return nil
 	}
 	eng, err := engine.New(globals.BundleDir)
@@ -304,22 +304,22 @@ func pushToPkgs(pkgs []string, opLabel string) error {
 	paths := rulesPaths()
 	pushed := []string{}
 	skipped := []string{}
-	for _, pkg := range pkgs {
-		eff, err := rules.LoadEffective(paths, pkg)
+	for _, app := range apps {
+		eff, err := rules.LoadEffective(paths, app)
 		if err != nil {
 			return err
 		}
-		if err := eng.PushEffective(context.Background(), pkg, eff); err != nil {
+		if err := eng.PushEffective(context.Background(), app, eff); err != nil {
 			if errors.Is(err, engine.ErrAppNotRunning) {
-				skipped = append(skipped, pkg)
+				skipped = append(skipped, app)
 				continue
 			}
-			fmt.Fprintf(os.Stderr, "[%s] push to %s failed: %v\n", opLabel, pkg, err)
+			fmt.Fprintf(os.Stderr, "[%s] push to %s failed: %v\n", opLabel, app, err)
 			continue
 		}
-		pushed = append(pushed, pkg)
+		pushed = append(pushed, app)
 	}
-	report := fmt.Sprintf("[%s] pushed to %d pkg", opLabel, len(pushed))
+	report := fmt.Sprintf("[%s] pushed to %d app", opLabel, len(pushed))
 	if len(pushed) > 0 {
 		report += ": " + strings.Join(pushed, ", ")
 	}
@@ -330,13 +330,13 @@ func pushToPkgs(pkgs []string, opLabel string) error {
 	return nil
 }
 
-// pushToPkg is the single-pkg variant. Used by `rules add --pkg X`.
-func pushToPkg(pkg, opLabel string) error {
-	return pushToPkgs([]string{pkg}, opLabel)
+// pushToApp is the single-app variant. Used by `rules add --app X`.
+func pushToApp(app, opLabel string) error {
+	return pushToApps([]string{app}, opLabel)
 }
 
-// runRulesTUI is the two-stage TUI: pick a package, then edit its toggles.
-// If pkg is non-empty (from --pkg) the picker is skipped.
+// runRulesTUI is the two-stage TUI: pick an app, then edit its toggles.
+// If app is non-empty (from --app) the picker is skipped.
 //
 // Design contract:
 //   - Opening the TUI has NO device side effects (no attach, no push). The
@@ -344,47 +344,47 @@ func pushToPkg(pkg, opLabel string) error {
 //   - The TUI checkboxes must reflect what's actually effective on the device,
 //     not just the user's prior intent. If forja detects that the device has
 //     lost the rules (off / PID change), status.json is updated to all-off for
-//     the chosen pkg BEFORE display so the checkboxes are honest.
+//     the chosen app BEFORE display so the checkboxes are honest.
 //   - Toggle changes are written to status.json only on quit, and only when
 //     something was actually toggled. A view-only quit is truly a no-op.
 //   - On dirty quit, push the new effective state to the device so things
 //     match what the user just configured.
-func runRulesTUI(pkg string) error {
+func runRulesTUI(app string) error {
 	paths := rulesPaths()
-	if pkg != "" {
-		resolved, err := resolvePkg(pkg)
+	if app != "" {
+		resolved, err := resolveApp(app)
 		if err != nil {
 			return err
 		}
-		pkg = resolved
+		app = resolved
 	} else {
-		picked, err := runPkgPicker()
+		picked, err := runAppPicker()
 		if err != nil {
 			return err
 		}
 		if picked == "" {
 			return nil // user cancelled
 		}
-		pkg = picked
+		app = picked
 	}
 
-	// Load effective rules for the chosen pkg. The caller may have just
-	// arrived from --pkg without ever touching status.json, which is fine:
-	// LoadEffective returns rules with .Enabled = status.IsEnabled(pkg, name),
+	// Load effective rules for the chosen app. The caller may have just
+	// arrived from --app without ever touching status.json, which is fine:
+	// LoadEffective returns rules with .Enabled = status.IsEnabled(app, name),
 	// and absent (= never touched) defaults to false. The TUI shows them as off.
-	eff, err := rules.LoadEffective(paths, pkg)
+	eff, err := rules.LoadEffective(paths, app)
 	if err != nil {
 		return err
 	}
 
 	deviceStatus := tui.DeviceStatus{Message: "device status unavailable"}
 	if eng, err := engine.New(globals.BundleDir); err == nil {
-		s := eng.QueryAttachStatus(context.Background(), pkg)
-		// If the device has demonstrably lost the rules for this pkg, sync
-		// status.json[pkg] to that reality so the checkboxes don't lie.
+		s := eng.QueryAttachStatus(context.Background(), app)
+		// If the device has demonstrably lost the rules for this app, sync
+		// status.json[app] to that reality so the checkboxes don't lie.
 		if s.Kind == engine.StatusAgentLiveButOff || s.Kind == engine.StatusAgentStale {
-			if err := rules.ClearPkg(paths, pkg); err == nil {
-				if e, lerr := rules.LoadEffective(paths, pkg); lerr == nil {
+			if err := rules.ClearApp(paths, app); err == nil {
+				if e, lerr := rules.LoadEffective(paths, app); lerr == nil {
 					eff = e
 				}
 			}
@@ -392,7 +392,7 @@ func runRulesTUI(pkg string) error {
 		deviceStatus = tui.DeviceStatus{Message: s.Message(), Live: s.Live()}
 	}
 
-	model := tui.NewRulesModel(pkg, eff, deviceStatus)
+	model := tui.NewRulesModel(app, eff, deviceStatus)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
@@ -403,14 +403,14 @@ func runRulesTUI(pkg string) error {
 		return nil
 	}
 
-	// Materialize the per-pkg enabled list from the toggle result and persist.
+	// Materialize the per-app enabled list from the toggle result and persist.
 	enabledNames := []string{}
 	for _, r := range updated {
 		if r.Enabled {
 			enabledNames = append(enabledNames, r.Name)
 		}
 	}
-	if err := rules.SetEnabledForPkg(paths, pkg, enabledNames); err != nil {
+	if err := rules.SetEnabledForApp(paths, app, enabledNames); err != nil {
 		return err
 	}
 	// Push the new effective state so device matches the just-saved intent.
@@ -418,39 +418,39 @@ func runRulesTUI(pkg string) error {
 	if err != nil {
 		return err
 	}
-	if err := eng.PushEffective(context.Background(), pkg, updated); err != nil {
+	if err := eng.PushEffective(context.Background(), app, updated); err != nil {
 		fmt.Fprintf(os.Stderr, "[warn] status saved but push failed: %v\n", err)
 		return err
 	}
-	fmt.Printf("[toggled + synced] %s: %d rule(s) enabled\n", pkg, len(enabledNames))
+	fmt.Printf("[toggled + synced] %s: %d rule(s) enabled\n", app, len(enabledNames))
 	return nil
 }
 
-// runPkgPicker queries the device for debuggable packages, runs the picker
-// TUI, and returns the selected pkg name (empty string on cancel).
-func runPkgPicker() (string, error) {
+// runAppPicker queries the device for debuggable apps, runs the picker
+// TUI, and returns the selected app name (empty string on cancel).
+func runAppPicker() (string, error) {
 	a := adb.New()
-	pkgs, err := a.ListDebuggablePackages(context.Background())
+	apps, err := a.ListDebuggableApps(context.Background())
 	if err != nil {
-		return "", fmt.Errorf("list debuggable packages: %w", err)
+		return "", fmt.Errorf("list debuggable apps: %w", err)
 	}
 	// Annotate the picker with any aliases the user has registered. Failure
 	// to load is non-fatal — the picker just renders without annotations.
-	aliasesByPkg := map[string][]string{}
+	aliasesByApp := map[string][]string{}
 	if a, err := rules.LoadAliases(rulesPaths()); err == nil {
-		for _, pkg := range pkgs {
-			if alts := a.AliasesFor(pkg); len(alts) > 0 {
-				aliasesByPkg[pkg] = alts
+		for _, app := range apps {
+			if alts := a.AliasesFor(app); len(alts) > 0 {
+				aliasesByApp[app] = alts
 			}
 		}
 	}
-	model := tui.NewPkgPickerModel(pkgs, aliasesByPkg)
+	model := tui.NewAppPickerModel(apps, aliasesByApp)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
-		return "", fmt.Errorf("tui (pkg picker): %w", err)
+		return "", fmt.Errorf("tui (app picker): %w", err)
 	}
-	sel, ok := finalModel.(tui.PkgPickerModel).Result()
+	sel, ok := finalModel.(tui.AppPickerModel).Result()
 	if !ok {
 		return "", nil
 	}

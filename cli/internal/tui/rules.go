@@ -39,7 +39,7 @@ type DeviceStatus struct {
 // effective rule slice so toggle changes within the TUI don't bleed into the
 // caller until .Result() is consulted.
 type RulesModel struct {
-	pkg      string
+	app      string
 	rules    []config.EffectiveRule
 	device   DeviceStatus
 	cursor   int
@@ -49,9 +49,9 @@ type RulesModel struct {
 }
 
 // NewRulesModel constructs a model from a merged effective rule slice and a
-// device status snapshot. pkg is shown in the header.
-func NewRulesModel(pkg string, eff []config.EffectiveRule, device DeviceStatus) RulesModel {
-	return RulesModel{pkg: pkg, rules: append([]config.EffectiveRule(nil), eff...), device: device}
+// device status snapshot. app is shown in the header.
+func NewRulesModel(app string, eff []config.EffectiveRule, device DeviceStatus) RulesModel {
+	return RulesModel{app: app, rules: append([]config.EffectiveRule(nil), eff...), device: device}
 }
 
 // Result returns the (possibly mutated) effective rules and whether the user
@@ -110,7 +110,7 @@ func (m RulesModel) View() string {
 	}
 	header := titleStyle.Render(fmt.Sprintf(
 		"forja rules — %s  (%d rules: %d project + %d user)",
-		m.pkg, len(m.rules), projectCount, userCount,
+		m.app, len(m.rules), projectCount, userCount,
 	))
 	if m.dirty {
 		header += "  " + dirtyStyle.Render("(unsynced toggles)")
