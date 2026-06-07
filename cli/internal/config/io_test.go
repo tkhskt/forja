@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -185,6 +186,91 @@ func TestStatusClearPkgKeepsKey(t *testing.T) {
 	}
 	if len(s["com.a"].Enabled) != 0 {
 		t.Errorf("ClearPkg should empty the list: %+v", s["com.a"])
+	}
+}
+
+// TestStatusJSONEmbedsCommentAtTop: SaveStatus must write a $comment metadata
+// key, and that key must sort to the first line of the file so editors see
+// the "managed file" warning immediately on open.
+func TestStatusJSONEmbedsCommentAtTop(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "status.json")
+	orig := Status{
+		"com.a": {Enabled: []string{"rule-1"}},
+		"com.b": {Enabled: []string{}},
+	}
+	if err := SaveStatus(path, orig); err != nil {
+		t.Fatalf("SaveStatus: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read status.json: %v", err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, `"$comment"`) {
+		t.Fatalf("expected $comment key in status.json; got:\n%s", body)
+	}
+	if !strings.Contains(body, "DO NOT EDIT") {
+		t.Errorf("expected a do-not-edit hint in $comment value; got:\n%s", body)
+	}
+	// $comment must precede every package key (the marshaler sorts by ASCII
+	// and `$` 0x24 is less than every letter, so this should hold).
+	commentIdx := strings.Index(body, `"$comment"`)
+	for _, pkg := range []string{`"com.a"`, `"com.b"`} {
+		if idx := strings.Index(body, pkg); idx > 0 && idx < commentIdx {
+			t.Errorf("$comment should appear before %s; got: comment=%d %s=%d", pkg, commentIdx, pkg, idx)
+		}
+	}
+}
+
+// TestStatusJSONLoadIgnoresMetaKeys: hand-authored status.json files (or
+// older forja outputs that introduce additional `$`-prefixed metadata keys)
+// must load successfully — the metadata is silently dropped, the real
+// package entries survive.
+func TestStatusJSONLoadIgnoresMetaKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "status.json")
+	manual := []byte(`{
+  "$comment": "hand-authored, expect this to be stripped",
+  "$schema": "https://example.com/forja-status.schema.json",
+  "com.real": { "enabled": ["foo"] },
+  "com.empty": { "enabled": [] }
+}`)
+	if err := os.WriteFile(path, manual, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := LoadStatus(path)
+	if err != nil {
+		t.Fatalf("LoadStatus: %v", err)
+	}
+	if _, exists := st["$comment"]; exists {
+		t.Errorf("$comment must be stripped, but found in loaded Status: %+v", st)
+	}
+	if _, exists := st["$schema"]; exists {
+		t.Errorf("$schema must be stripped, but found in loaded Status: %+v", st)
+	}
+	if !st.IsEnabled("com.real", "foo") {
+		t.Errorf("com.real/foo should be enabled: %+v", st)
+	}
+	if _, exists := st["com.empty"]; !exists {
+		t.Errorf("com.empty entry should survive (even with empty list): %+v", st)
+	}
+
+	// Round-trip: saving again must re-emit $comment (forja-owned), and
+	// loading once more must keep IsEnabled stable.
+	if err := SaveStatus(path, st); err != nil {
+		t.Fatalf("SaveStatus round-trip: %v", err)
+	}
+	raw, _ := os.ReadFile(path)
+	if !strings.Contains(string(raw), `"$comment"`) {
+		t.Errorf("re-save lost the $comment metadata key")
+	}
+	back, err := LoadStatus(path)
+	if err != nil {
+		t.Fatalf("LoadStatus round-trip: %v", err)
+	}
+	if !back.IsEnabled("com.real", "foo") {
+		t.Errorf("com.real/foo should still be enabled after round-trip: %+v", back)
 	}
 }
 

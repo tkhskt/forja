@@ -371,3 +371,186 @@ func TestSyncOffPushesEmptyArray(t *testing.T) {
 	runForja(t, "off", "--pkg", PkgDev)
 	maestroFlow(t, "tap_singleton_assert_200.yaml")
 }
+
+// ============================================================================
+// `forja sync` command
+// ============================================================================
+//
+// sync is the explicit "re-push the current effective state" entry point.
+// Use case: hand-edit forja/rules.local.yml, then run `forja sync` to make
+// the change visible on every package that already has the affected rule
+// enabled. sync NEVER writes status.json — only reads.
+
+// TestSyncCommandReflectsManualBodyEdit: hand-edit the body of an enabled
+// rule and verify that `forja sync` (with no args) propagates the change to
+// the device.
+func TestSyncCommandReflectsManualBodyEdit(t *testing.T) {
+	resetForjaState(t, PkgDev)
+	forceStop(t, PkgDev)
+	startMainActivity(t, PkgDev)
+
+	runForja(t, "rules", "add", "synced-body",
+		"--pkg", PkgDev,
+		"--host", "example.com", "--path", "/",
+		"--status", "418",
+		"--body", `{"before":"sync"}`,
+	)
+	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
+	runInlineMaestro(t, `
+appId: com.tkhskt.forja.sample
+---
+- tapOn:
+    id: "fetch_singleton"
+- extendedWaitUntil:
+    visible:
+      text: ".*HTTP 418.*"
+    timeout: 15000
+- assertVisible:
+    text: ".*before.*"
+`)
+
+	// Hand-edit: replace the body JSON directly in the yml.
+	ymlPath := filepath.Join(repoRoot, "forja", "rules.local.yml")
+	raw, err := os.ReadFile(ymlPath)
+	if err != nil {
+		t.Fatalf("read yml: %v", err)
+	}
+	edited := strings.Replace(string(raw), `{"before":"sync"}`, `{"after":"sync"}`, 1)
+	if edited == string(raw) {
+		t.Fatalf("expected to replace body in yml; raw was:\n%s", raw)
+	}
+	if err := os.WriteFile(ymlPath, []byte(edited), 0o644); err != nil {
+		t.Fatalf("write yml: %v", err)
+	}
+
+	// Push the hand edit via the explicit sync command.
+	runForja(t, "sync")
+
+	startMainActivity(t, PkgDev)
+	runInlineMaestro(t, `
+appId: com.tkhskt.forja.sample
+---
+- tapOn:
+    id: "fetch_singleton"
+- extendedWaitUntil:
+    visible:
+      text: ".*HTTP 418.*"
+    timeout: 15000
+- assertVisible:
+    text: ".*after.*"
+`)
+}
+
+// TestSyncCommandPkgFilterOnlyAffectsTarget: when both PkgDev and PkgStaging
+// have the same rule enabled, `forja sync --pkg PkgDev` must update PkgDev
+// only — PkgStaging keeps the pre-edit body.
+func TestSyncCommandPkgFilterOnlyAffectsTarget(t *testing.T) {
+	resetForjaState(t, PkgDev, PkgStaging)
+	for _, p := range []string{PkgDev, PkgStaging} {
+		forceStop(t, p)
+		startMainActivity(t, p)
+	}
+
+	// Enable a single rule on both packages with the same starting body.
+	runForja(t, "rules", "add", "filter-rule",
+		"--pkg", PkgDev,
+		"--host", "example.com", "--path", "/",
+		"--status", "418",
+		"--body", `{"phase":"before"}`,
+	)
+	runForja(t, "apply", "--pkg", PkgStaging, "--enable", "filter-rule")
+	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
+
+	// Confirm baseline: both apps see "before".
+	for _, app := range []string{"com.tkhskt.forja.sample", "com.tkhskt.forja.sample.staging"} {
+		runInlineMaestro(t, "appId: "+app+`
+---
+- tapOn:
+    id: "fetch_singleton"
+- extendedWaitUntil:
+    visible:
+      text: ".*HTTP 418.*"
+    timeout: 15000
+- assertVisible:
+    text: ".*before.*"
+`)
+	}
+
+	// Hand-edit body, then sync ONLY PkgDev.
+	ymlPath := filepath.Join(repoRoot, "forja", "rules.local.yml")
+	raw, err := os.ReadFile(ymlPath)
+	if err != nil {
+		t.Fatalf("read yml: %v", err)
+	}
+	edited := strings.Replace(string(raw), `{"phase":"before"}`, `{"phase":"after"}`, 1)
+	if edited == string(raw) {
+		t.Fatalf("expected to replace body in yml; raw was:\n%s", raw)
+	}
+	if err := os.WriteFile(ymlPath, []byte(edited), 0o644); err != nil {
+		t.Fatalf("write yml: %v", err)
+	}
+	runForja(t, "sync", "--pkg", PkgDev)
+
+	// PkgDev should now show "after".
+	startMainActivity(t, PkgDev)
+	runInlineMaestro(t, `
+appId: com.tkhskt.forja.sample
+---
+- tapOn:
+    id: "fetch_singleton"
+- extendedWaitUntil:
+    visible:
+      text: ".*HTTP 418.*"
+    timeout: 15000
+- assertVisible:
+    text: ".*after.*"
+`)
+
+	// PkgStaging should still show "before" (untouched by --pkg-filtered sync).
+	startMainActivity(t, PkgStaging)
+	runInlineMaestro(t, `
+appId: com.tkhskt.forja.sample.staging
+---
+- tapOn:
+    id: "fetch_singleton"
+- extendedWaitUntil:
+    visible:
+      text: ".*HTTP 418.*"
+    timeout: 15000
+- assertVisible:
+    text: ".*before.*"
+`)
+}
+
+// TestSyncCommandRejectsUnknownPkg: `forja sync --pkg X` must fail when X has
+// no status.json entry, telling the user to run `forja apply` first.
+func TestSyncCommandRejectsUnknownPkg(t *testing.T) {
+	resetForjaState(t, PkgDev)
+
+	// Seed status.json with a different package so the file isn't empty.
+	runForja(t, "rules", "add", "stub", "--host", "example.com", "--path", "/foo", "--status", "418")
+	runForja(t, "apply", "--pkg", PkgDev, "--enable", "stub")
+
+	out, err := runForjaAllowingFailure(t, "sync", "--pkg", "com.no.such.pkg")
+	if err == nil {
+		t.Fatalf("expected sync of an unknown pkg to fail; got success. output:\n%s", out)
+	}
+	if !strings.Contains(out, "no status.json entry") {
+		t.Errorf("expected error to mention 'no status.json entry'; got:\n%s", out)
+	}
+}
+
+// TestSyncCommandWithEmptyStatusErrors: `forja sync` with no status entries
+// at all has nothing to do — it should error rather than silently no-op.
+func TestSyncCommandWithEmptyStatusErrors(t *testing.T) {
+	resetForjaState(t, PkgDev)
+
+	// Don't add anything; status.json never gets created.
+	out, err := runForjaAllowingFailure(t, "sync")
+	if err == nil {
+		t.Fatalf("expected sync with empty status to fail; got success. output:\n%s", out)
+	}
+	if !strings.Contains(out, "nothing to sync") {
+		t.Errorf("expected error to mention 'nothing to sync'; got:\n%s", out)
+	}
+}
