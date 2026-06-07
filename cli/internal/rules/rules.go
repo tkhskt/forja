@@ -158,19 +158,30 @@ func Add(paths Paths, scope Scope, opts AddOptions) error {
 	if opts.Body != nil && opts.BodyFile != "" {
 		return errors.New("body and bodyFile are mutually exclusive")
 	}
-	path := paths.pathFor(scope)
-	rf, err := config.Load(path)
+	// Verify the name is unique across BOTH scopes — also surfaces any
+	// pre-existing same-file duplicate or cross-scope duplicate before we
+	// touch disk.
+	project, local, err := loadBothScopes(paths)
 	if err != nil {
 		return err
 	}
-	if rf == nil {
-		rf = &config.RulesFile{}
+	if project != nil && project.FindRule(opts.Name) != nil {
+		return fmt.Errorf("rule %q already exists in project scope", opts.Name)
+	}
+	if local != nil && local.FindRule(opts.Name) != nil {
+		return fmt.Errorf("rule %q already exists in local scope", opts.Name)
 	}
 
-	// Disallow same-name duplicates within the SAME scope. Cross-scope
-	// (project ↔ local) shadowing is intentionally allowed (override pattern).
-	if rf.FindRule(opts.Name) != nil {
-		return fmt.Errorf("rule %q already exists in %s scope", opts.Name, scope)
+	path := paths.pathFor(scope)
+	var rf *config.RulesFile
+	switch scope {
+	case ScopeProject:
+		rf = project
+	case ScopeLocal:
+		rf = local
+	}
+	if rf == nil {
+		rf = &config.RulesFile{}
 	}
 
 	r := config.Rule{
@@ -192,13 +203,51 @@ func Add(paths Paths, scope Scope, opts AddOptions) error {
 	return config.Save(path, rf)
 }
 
-// findRule looks the named rule up across both scopes. Returns the scope it
-// was found in. Local scope wins on collision (= override semantics).
+// loadBothScopes loads project + local rules together and verifies their
+// name sets are disjoint. Rule names are required to be unique across the
+// two scopes — the override / shadow pattern that v0.1.0 supported was
+// removed because it made status.json's name-keyed enabled list ambiguous
+// (one name could refer to two rules in two files). Callers can build the
+// "rename + disable + enable" workflow on top of this stricter contract
+// when they really want a personal alternative to a project rule.
+//
+// Returns (project, local, error). Either file may be nil if absent.
+// Load errors from either file are propagated as-is.
+func loadBothScopes(paths Paths) (*config.RulesFile, *config.RulesFile, error) {
+	project, err := config.Load(paths.Project)
+	if err != nil {
+		return nil, nil, err
+	}
+	local, err := config.Load(paths.Local)
+	if err != nil {
+		return nil, nil, err
+	}
+	if project != nil && local != nil {
+		projectNames := make(map[string]bool, len(project.Rules))
+		for _, r := range project.Rules {
+			projectNames[r.Name] = true
+		}
+		for _, r := range local.Rules {
+			if projectNames[r.Name] {
+				return nil, nil, fmt.Errorf("rule %q exists in both rules.yml and rules.local.yml — rule names must be unique across both scopes (rename one of them, or remove the duplicate)", r.Name)
+			}
+		}
+	}
+	return project, local, nil
+}
+
+// findRule looks the named rule up across both scopes. Cross-scope name
+// duplicates are forbidden (loadBothScopes rejects them), so the lookup is
+// unambiguous: at most one of the two scopes contains the name.
 func findRule(paths Paths, name string) (Scope, error) {
-	if l, err := config.Load(paths.Local); err == nil && l != nil && l.FindRule(name) != nil {
+	project, local, err := loadBothScopes(paths)
+	if err != nil {
+		return ScopeProject, err
+	}
+	if local != nil && local.FindRule(name) != nil {
 		return ScopeLocal, nil
 	}
-	if p, err := config.Load(paths.Project); err == nil && p != nil && p.FindRule(name) != nil {
+	if project != nil && project.FindRule(name) != nil {
 		return ScopeProject, nil
 	}
 	return ScopeProject, fmt.Errorf("rule %q not found in either scope", name)
@@ -403,13 +452,10 @@ func SetEnabledForApp(paths Paths, app string, enabled []string) error {
 
 // LoadEffective returns the merged effective rule list for app, ready to
 // push. EffectiveRule.Enabled reflects app's status.json enabled list
-// (absent = false).
+// (absent = false). Cross-scope name duplicates are rejected by
+// loadBothScopes so the returned list always has unique names.
 func LoadEffective(paths Paths, app string) ([]config.EffectiveRule, error) {
-	proj, err := config.Load(paths.Project)
-	if err != nil {
-		return nil, err
-	}
-	local, err := config.Load(paths.Local)
+	project, local, err := loadBothScopes(paths)
 	if err != nil {
 		return nil, err
 	}
@@ -419,7 +465,7 @@ func LoadEffective(paths Paths, app string) ([]config.EffectiveRule, error) {
 	}
 	projectDir := filepath.Dir(paths.Project)
 	localDir := filepath.Dir(paths.Local)
-	return config.Effective(proj, projectDir, local, localDir, st, app), nil
+	return config.Effective(project, projectDir, local, localDir, st, app), nil
 }
 
 // LoadStatus returns the current status (loading from disk). Convenience for
@@ -429,14 +475,16 @@ func LoadStatus(paths Paths) (config.Status, error) {
 }
 
 // loadKnownNames returns the union of all rule names across project + local yml.
-// Used by Enable to typo-check before mutating status.json.
+// Used by Enable to typo-check before mutating status.json. Cross-scope
+// name uniqueness is enforced upstream by loadBothScopes, so the union
+// here is always a strict union (no shared names).
 func loadKnownNames(paths Paths) (map[string]struct{}, error) {
+	project, local, err := loadBothScopes(paths)
+	if err != nil {
+		return nil, err
+	}
 	known := map[string]struct{}{}
-	for _, p := range []string{paths.Project, paths.Local} {
-		rf, err := config.Load(p)
-		if err != nil {
-			return nil, err
-		}
+	for _, rf := range []*config.RulesFile{project, local} {
 		if rf == nil {
 			continue
 		}

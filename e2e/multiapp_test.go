@@ -111,10 +111,23 @@ func TestMultiAppOffOnlyAffectsTarget(t *testing.T) {
 	startMainActivity(t, AppDev)
 	maestroFlow(t, "tap_singleton_assert_200.yaml")
 
-	// Staging never had forja attached — confirm nothing changed for it.
-	if _, exists := readDeviceFile(t, AppStaging, "files/rules.json"); exists {
-		t.Error("staging's rules.json should not exist (forja never targeted it)")
-	}
+	// Staging never had forja attached — verify behaviorally. Checking for
+	// absence of /files/rules.json is unreliable: prior test runs may have
+	// targeted staging on the same emulator and left runtime files behind
+	// that aren't cleaned up by `pm clear`. What matters here is whether
+	// *this* invocation pushed a rule to staging, which a 200 response
+	// proves it didn't.
+	startMainActivity(t, AppStaging)
+	runInlineMaestro(t, `
+appId: com.tkhskt.forja.sample.staging
+---
+- tapOn:
+    id: "fetch_singleton"
+- extendedWaitUntil:
+    visible:
+      text: ".*HTTP 200.*"
+    timeout: 15000
+`)
 }
 
 // TestMultiAppSharedRuleAppliesToBothFlavors: a single rule definition in yml

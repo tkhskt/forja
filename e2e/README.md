@@ -71,7 +71,7 @@ moments.
 | `helpers_test.go` | Shared helpers: runForja / adbShell / waitForLogcat / readStatusJSON, etc. |
 | `helpers_extra_test.go` | Fixture copying / inline Maestro flow |
 | `core_test.go` | **The 5 core scenarios** (basic rewrite, self-destruct, kill, off, bodyFile) |
-| `sync_test.go` | **`forja rules` sync-pattern tests** (add/update/remove auto-push, off, PID-change detection, shadow, etc.) |
+| `sync_test.go` | **`forja rules` sync-pattern tests** (add/update/remove auto-push, off, PID-change detection, project+local merge, etc.) |
 | `multiapp_test.go` | **Multi-debuggable-app tests** (dev + staging coexisting, attach isolation, per-app off, per-app toggles of a shared rule) |
 
 ## TestMain lifecycle
@@ -155,7 +155,7 @@ Out of scope for now.
 - **core**: basic rewrite / self-destruct / process kill clearing state / off
   / bodyFile
 - **sync**: auto-push for add/update/remove, off, PID-change detection,
-  project/user shadow
+  project + local merge
 - **multiapp**: dev + staging operated simultaneously, attach isolation,
   per-app off, per-app toggles on a shared rule
 

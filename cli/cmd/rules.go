@@ -9,7 +9,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -120,10 +119,10 @@ func newRulesListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List rules in the catalog (yml only — does not touch any device)",
 		Long: `List the merged rule catalog from forja/rules.yml (project) and
-forja/rules.local.yml (local). Project rules shadowed by a local rule of
-the same name are hidden — the listing mirrors the on-device effective set,
-in the same order the OkHttp interceptor would scan them (local rules first,
-then project rules).
+forja/rules.local.yml (local). Rules render in the same order the OkHttp
+interceptor would scan them (local rules first, then project rules — the
+on-device match precedence). Rule names are unique across both scopes, so
+each row appears exactly once.
 
 With --app, each rule line is prefixed with [on] / [off] to show whether
 it's currently enabled for that app per forja/status.json. Without --app,
@@ -228,12 +227,12 @@ func formatRuleLine(r config.EffectiveRule, showEnabled bool) string {
 		// useful instead of an opaque "object" label.
 		if r.Response.Body.Object != nil {
 			if b, err := json.Marshal(r.Response.Body.Object); err == nil {
-				fields = append(fields, "body="+formatBodyPreview(string(b)))
+				fields = append(fields, "body="+tui.FormatBodyPreview(string(b)))
 			} else {
 				fields = append(fields, "body=object")
 			}
 		} else {
-			fields = append(fields, "body="+formatBodyPreview(r.Response.Body.String))
+			fields = append(fields, "body="+tui.FormatBodyPreview(r.Response.Body.String))
 		}
 	}
 	if r.Response.BodyFile != "" {
@@ -250,40 +249,6 @@ func formatRuleLine(r config.EffectiveRule, showEnabled bool) string {
 	return sb.String()
 }
 
-// bodyPreviewMaxRunes is the soft cap on the body preview length. Picked so a
-// typical rule fits on an 80-column terminal even when host / path / status /
-// headers are all set.
-const bodyPreviewMaxRunes = 30
-
-// formatBodyPreview renders a body string in a way that's legible at a
-// glance — single-quoted so JSON / HTML payloads don't drown in escaped
-// double quotes, with `\n` / `\r` / `\t` shown as backslash escapes so the
-// output stays on one line. Long bodies are truncated by rune (so multi-byte
-// characters never get sliced in half) with a `... (N chars)` suffix.
-func formatBodyPreview(s string) string {
-	const ellipsis = "..."
-	if s == "" {
-		return "''"
-	}
-	runes := []rune(s)
-	truncated := false
-	if len(runes) > bodyPreviewMaxRunes {
-		runes = runes[:bodyPreviewMaxRunes]
-		truncated = true
-	}
-	escaper := strings.NewReplacer(
-		`\`, `\\`,
-		`'`, `\'`,
-		"\n", `\n`,
-		"\r", `\r`,
-		"\t", `\t`,
-	)
-	out := "'" + escaper.Replace(string(runes)) + "'"
-	if truncated {
-		out += fmt.Sprintf(" %s (%d chars)", ellipsis, utf8.RuneCountInString(s))
-	}
-	return out
-}
 
 func newRulesAddCmd() *cobra.Command {
 	var f rulesFlags
@@ -354,9 +319,9 @@ After the yml edit, forja iterates status.json and re-pushes the rule set to
 every app where this rule is currently enabled. Pass --no-sync to skip
 the auto-push (yml is still updated).
 
-By default the rule is searched across both scopes (local-wins on shadows).
-Use --local to force the local file even when a project-scope rule of the
-same name exists.
+Rule names are unique across both scopes, so update just finds the rule
+wherever it lives. --local is accepted for explicitness but isn't strictly
+required.
 
   forja rules update teapot --status 503    # patch + auto-push to every app where teapot is on
   forja rules update teapot --no-sync       # patch yml only`,
@@ -426,9 +391,9 @@ func newRulesRemoveCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "remove NAME",
 		Short: "Delete a rule (auto-pushes the new set to every app where it was enabled)",
-		Long: `Delete a rule. Searches across both scopes (local-wins on shadows). Use
---local to force removal from the local file when a project-scope rule of
-the same name also exists.
+		Long: `Delete a rule from whichever scope it lives in. Rule names are unique
+across both scopes, so the lookup is unambiguous; --local is accepted for
+explicitness but isn't strictly required.
 
 After the yml edit, forja iterates status.json and re-pushes the rule set
 (now without the deleted rule) to every app where it was enabled, then

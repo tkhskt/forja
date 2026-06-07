@@ -27,10 +27,10 @@ const (
 )
 
 // LoadDepsFunc resolves the per-app state the rules view needs: the merged
-// effective rule slice (post-shadow filtering, with .Enabled reflecting
-// status.json) and a DeviceStatus snapshot (live/stale/unknown). It runs in
-// a goroutine via tea.Cmd so the bubbletea event loop keeps rendering the
-// loading view while the device query and yml reload are in flight.
+// effective rule slice (.Enabled reflecting status.json) and a DeviceStatus
+// snapshot (live/stale/unknown). It runs in a goroutine via tea.Cmd so the
+// bubbletea event loop keeps rendering the loading view while the device
+// query and yml reload are in flight.
 //
 // Returning a non-nil error makes the wrapper quit with that error attached
 // to its Result; callers handle the surface-level reporting.

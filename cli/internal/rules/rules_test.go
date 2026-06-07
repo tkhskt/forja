@@ -72,14 +72,21 @@ func TestAddDuplicateInSameScope(t *testing.T) {
 	}
 }
 
-func TestAddSameNameInDifferentScopesIsAllowed(t *testing.T) {
-	// Shadow rules: same name in project + user. User wins at Effective time.
+// TestAddRejectsSameNameAcrossScopes: rule names are unique across both
+// scopes. An Add that would introduce a cross-scope duplicate must be
+// rejected with an actionable error (= naming the scope that already
+// owns the name).
+func TestAddRejectsSameNameAcrossScopes(t *testing.T) {
 	p := pathsIn(t)
 	if err := Add(p, ScopeProject, AddOptions{Name: "x", Status: 500}); err != nil {
 		t.Fatal(err)
 	}
-	if err := Add(p, ScopeLocal, AddOptions{Name: "x", Status: 999}); err != nil {
-		t.Errorf("shadow rule should be allowed: %v", err)
+	err := Add(p, ScopeLocal, AddOptions{Name: "x", Status: 999})
+	if err == nil {
+		t.Fatal("cross-scope same-name add should be rejected")
+	}
+	if !strings.Contains(err.Error(), "project scope") {
+		t.Errorf("error should name the offending scope; got: %v", err)
 	}
 }
 
@@ -106,25 +113,6 @@ func TestRemoveFindsAcrossScopes(t *testing.T) {
 	pf, _ = config.Load(p.Project)
 	if pf.FindRule("team-rule") != nil {
 		t.Errorf("team-rule should be gone from project file")
-	}
-}
-
-func TestRemoveExplicitScopeOnShadow(t *testing.T) {
-	p := pathsIn(t)
-	_ = Add(p, ScopeProject, AddOptions{Name: "x"})
-	_ = Add(p, ScopeLocal, AddOptions{Name: "x"})
-
-	scope := ScopeProject
-	if err := Remove(p, "x", &scope); err != nil {
-		t.Fatalf("Remove explicit project: %v", err)
-	}
-	pf, _ := config.Load(p.Project)
-	if pf.FindRule("x") != nil {
-		t.Errorf("project x should be removed")
-	}
-	uf, _ := config.Load(p.Local)
-	if uf.FindRule("x") == nil {
-		t.Errorf("user x should be untouched")
 	}
 }
 
@@ -257,28 +245,84 @@ func TestLoadEffectiveMergesAndOverridesPerApp(t *testing.T) {
 	p := pathsIn(t)
 	_ = Add(p, ScopeProject, AddOptions{Name: "team-a", Status: 200})
 	_ = Add(p, ScopeProject, AddOptions{Name: "team-b", Status: 200})
-	_ = Add(p, ScopeLocal, AddOptions{Name: "team-b", Status: 999})
+	_ = Add(p, ScopeLocal, AddOptions{Name: "personal-fast", Status: 418})
 	_ = Add(p, ScopeLocal, AddOptions{Name: "personal", Status: 418})
-	// Enable on com.example.app: team-b (shadowed user) + personal only — leave team-a off.
-	_ = Enable(p, "com.example.app", []string{"team-b", "personal"})
+	// Enable on com.example.app: personal-fast + personal — leave team rules off.
+	_ = Enable(p, "com.example.app", []string{"personal-fast", "personal"})
 
 	rules, err := LoadEffective(p, "com.example.app")
 	if err != nil {
 		t.Fatalf("LoadEffective: %v", err)
 	}
-	// Expected order: user rules first (team-b, personal), then un-shadowed
-	// project rules (team-a).
-	if len(rules) != 3 {
-		t.Fatalf("want 3 effective rules, got %d: %+v", len(rules), rules)
+	// Expected order: local rules first (personal-fast, personal), then
+	// project rules in declaration order (team-a, team-b). Cross-scope
+	// name duplicates are forbidden by loadBothScopes, so the merged list
+	// is a plain concat with no shadow filtering.
+	if len(rules) != 4 {
+		t.Fatalf("want 4 effective rules, got %d: %+v", len(rules), rules)
 	}
-	if rules[0].Name != "team-b" || rules[0].Scope != config.ScopeLocal || rules[0].Response.Status != 999 || !rules[0].Enabled {
+	if rules[0].Name != "personal-fast" || rules[0].Scope != config.ScopeLocal || !rules[0].Enabled {
 		t.Errorf("rules[0]: %+v", rules[0])
 	}
-	if rules[1].Name != "personal" || !rules[1].Enabled {
+	if rules[1].Name != "personal" || rules[1].Scope != config.ScopeLocal || !rules[1].Enabled {
 		t.Errorf("rules[1]: %+v", rules[1])
 	}
-	if rules[2].Name != "team-a" || rules[2].Enabled {
-		t.Errorf("rules[2] should be off (not enabled on com.example.app): %+v", rules[2])
+	if rules[2].Name != "team-a" || rules[2].Scope != config.ScopeProject || rules[2].Enabled {
+		t.Errorf("rules[2]: %+v", rules[2])
+	}
+	if rules[3].Name != "team-b" || rules[3].Scope != config.ScopeProject || rules[3].Enabled {
+		t.Errorf("rules[3]: %+v", rules[3])
+	}
+}
+
+// TestAddRejectsCrossScopeDuplicate: adding a rule whose name already
+// exists in the other scope must error out before touching disk. The
+// rejection diagnostic must name the scope where the existing rule lives
+// so the user can find it.
+func TestAddRejectsCrossScopeDuplicate(t *testing.T) {
+	p := pathsIn(t)
+	_ = Add(p, ScopeProject, AddOptions{Name: "shared", Status: 418})
+
+	err := Add(p, ScopeLocal, AddOptions{Name: "shared", Status: 503})
+	if err == nil {
+		t.Fatal("expected Add(local, shared) to be rejected after a project rule of the same name exists")
+	}
+	if !strings.Contains(err.Error(), "project scope") {
+		t.Errorf("error should name the offending scope; got: %v", err)
+	}
+	// And the inverse — pre-existing local with same name should block a
+	// new project add.
+	p2 := pathsIn(t)
+	_ = Add(p2, ScopeLocal, AddOptions{Name: "shared", Status: 418})
+	err = Add(p2, ScopeProject, AddOptions{Name: "shared", Status: 503})
+	if err == nil {
+		t.Fatal("expected Add(project, shared) to be rejected after a local rule of the same name exists")
+	}
+	if !strings.Contains(err.Error(), "local scope") {
+		t.Errorf("error should name the offending scope; got: %v", err)
+	}
+}
+
+// TestLoadEffectiveRejectsCrossScopeDuplicates: hand-edited yml files
+// that introduce a cross-scope duplicate (= bypassing Add) must surface
+// as a clear load-time error. status.json's name-keyed enabled list
+// becomes ambiguous when two rules share a name, and the push path can't
+// safely pick one.
+func TestLoadEffectiveRejectsCrossScopeDuplicates(t *testing.T) {
+	p := pathsIn(t)
+	const shared = "shared"
+	if err := os.WriteFile(p.Project, []byte("rules:\n  - name: "+shared+"\n    response:\n      status: 418\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.Local, []byte("rules:\n  - name: "+shared+"\n    response:\n      status: 503\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadEffective(p, "com.example.app")
+	if err == nil {
+		t.Fatal("LoadEffective should reject cross-scope duplicates")
+	}
+	if !strings.Contains(err.Error(), "both rules.yml and rules.local.yml") {
+		t.Errorf("error should name both files; got: %v", err)
 	}
 }
 
@@ -340,6 +384,62 @@ func TestAddRejectsBothBodyAndBodyFile(t *testing.T) {
 		t.Error("expected error when both body and bodyFile are set")
 	}
 }
+
+// TestUpdateSurfacesLoadErrorOnDuplicateYml: a hand-edited yml with a
+// duplicate rule name fails Load with a specific diagnostic. The Update
+// path must propagate that diagnostic verbatim — an earlier implementation
+// silently swallowed Load errors inside findRule, surfacing a misleading
+// "rule not found in either scope" instead of the real cause. This test
+// pins the propagation contract so a future findRule refactor can't
+// regress it.
+func TestUpdateSurfacesLoadErrorOnDuplicateYml(t *testing.T) {
+	p := pathsIn(t)
+	corruptYml := []byte(`
+rules:
+  - name: foo
+    response: { status: 418 }
+  - name: foo
+    response: { status: 500 }
+`)
+	if err := os.WriteFile(p.Project, corruptYml, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := Update(p, "anything", nil, UpdateOptions{Host: ptrString("x")})
+	if err == nil {
+		t.Fatal("Update on a yml with duplicate names should fail")
+	}
+	if !strings.Contains(err.Error(), "duplicate rule name") {
+		t.Errorf("error should propagate Load's duplicate-name diagnostic; got: %v", err)
+	}
+}
+
+// TestRemoveSurfacesLoadErrorOnDuplicateYml: same contract as the Update
+// case above but on the Remove path (which also threads through findRule).
+func TestRemoveSurfacesLoadErrorOnDuplicateYml(t *testing.T) {
+	p := pathsIn(t)
+	corruptYml := []byte(`
+rules:
+  - name: foo
+    response: { status: 418 }
+  - name: foo
+    response: { status: 500 }
+`)
+	if err := os.WriteFile(p.Project, corruptYml, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := Remove(p, "anything", nil)
+	if err == nil {
+		t.Fatal("Remove on a yml with duplicate names should fail")
+	}
+	if !strings.Contains(err.Error(), "duplicate rule name") {
+		t.Errorf("error should propagate Load's duplicate-name diagnostic; got: %v", err)
+	}
+}
+
+// ptrString is a tiny helper for building UpdateOptions field pointers in
+// tests where the actual value doesn't matter (we only care that the load
+// step fails before any field is consulted).
+func ptrString(s string) *string { return &s }
 
 func TestUpdateSwapsBodyToBodyFile(t *testing.T) {
 	p := pathsIn(t)

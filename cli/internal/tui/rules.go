@@ -8,6 +8,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -155,8 +156,9 @@ func (m RulesModel) View() string {
 		if r.Response.Status != 0 {
 			status = fmt.Sprintf("%d", r.Response.Status)
 		}
-		line := fmt.Sprintf("  %s %-30s host=%-24s path=%-20s → %s",
-			mark, truncate(r.Name, 30), truncate(host, 24), truncate(path, 20), status)
+		line := fmt.Sprintf("  %s %-30s host=%-24s path=%-20s → %s%s",
+			mark, truncate(r.Name, 30), truncate(host, 24), truncate(path, 20), status,
+			responseExtras(r.Rule))
 		switch {
 		case i == m.cursor:
 			line = selectedStyle.Render(line)
@@ -166,6 +168,40 @@ func (m RulesModel) View() string {
 		body += line + "\n"
 	}
 	return header + "\n" + statusLine + "\n" + body + "\n" + help + "\n"
+}
+
+// responseExtras renders the body / bodyFile / headers fragment appended
+// to a rule row in the TUI. Each component is optional and skipped when
+// not set on the rule, so a status-only rewrite stays compact:
+//
+//	[x] mock-failure  host=example.com  path=/foo  → 500  body='{"k":"v"}'
+//	[x] empty-204     host=example.com  path=/foo  → 204  body=''
+//	[x] big-response  host=example.com  path=/foo  → 200  bodyFile=responses/x.json
+//	[x] html-mock     host=example.com  path=/foo  → 200  body='<h1>hi</h1>' headers=1
+//
+// `rules list` and the TUI use the same FormatBodyPreview underneath so
+// the same truncation / escaping rules apply to both surfaces.
+func responseExtras(r config.Rule) string {
+	out := ""
+	if r.Response.Body != nil {
+		switch {
+		case r.Response.Body.Object != nil:
+			if b, err := json.Marshal(r.Response.Body.Object); err == nil {
+				out += "  body=" + FormatBodyPreview(string(b))
+			} else {
+				out += "  body=object"
+			}
+		default:
+			out += "  body=" + FormatBodyPreview(r.Response.Body.String)
+		}
+	}
+	if r.Response.BodyFile != "" {
+		out += "  bodyFile=" + r.Response.BodyFile
+	}
+	if n := len(r.Response.Headers); n > 0 {
+		out += fmt.Sprintf("  headers=%d", n)
+	}
+	return out
 }
 
 func stringOrStar(s string) string {

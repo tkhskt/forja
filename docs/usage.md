@@ -163,15 +163,20 @@ Omitting `--body` entirely leaves the original response body untouched.
 
 ---
 
-## Scope conflict resolution
+## Rule names are unique across both scopes
 
-When the same rule name appears in both project and local scopes (= shadow):
+Rule names form a single flat namespace shared by `forja/rules.yml` and `forja/rules.local.yml`. Adding a rule whose name already exists in *either* file is rejected. Hand-editing a yml to introduce a cross-scope duplicate makes every subsequent forja command fail at load time with a diagnostic naming the offending rule.
 
-- **The local copy wins**
-- The TUI shows only the local copy (the project copy is hidden)
-- `forja rules update NAME` patches the local copy (search is local-first)
-- `forja rules update NAME --local` forces the local file even when a project-scope rule of the same name exists
-- `forja rules remove NAME --local` deletes only the local copy (= the project entry becomes visible again)
+This is intentional: `status.json` keys per-app enabled state by rule name, so a name shared between two files would mean an ambiguous toggle. If you want a personal variant of a team rule, give it a distinct name and disable the original on the apps you care about:
+
+```bash
+# Team rule lives in rules.yml as "mock-failure" (status 500).
+# You want 503 just for your local testing — pick a different name:
+forja rules add mock-failure-503 --local --host example.com --status 503
+forja apply --app dev --disable mock-failure --enable mock-failure-503
+```
+
+This keeps the team's rule intact and makes "which mock is firing right now?" obvious from the name in the logs.
 
 ---
 

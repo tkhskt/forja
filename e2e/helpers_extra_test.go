@@ -95,14 +95,53 @@ func runInlineMaestro(t *testing.T, flow string) string {
 		t.Fatal(err)
 	}
 	f.Close()
-	cmd := exec.Command(maestroPath, "test", f.Name())
-	cmd.Dir = filepath.Dir(flowsDir)
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	if err := cmd.Run(); err != nil {
+	out, err := runMaestroWithRetry(t, f.Name())
+	if err != nil {
 		t.Fatalf("inline maestro flow failed: %v\n--- flow ---\n%s--- output ---\n%s",
-			err, flow, buf.String())
+			err, flow, out)
 	}
-	return buf.String()
+	return out
+}
+
+// runMaestroWithRetry runs `maestro test <path>` and retries ONLY when the
+// failure is Maestro's own Android-driver startup timeout — a transient
+// infrastructure hiccup that has nothing to do with the flow's assertions.
+// It surfaces as "Maestro Android driver did not start up in time" when the
+// driver's dadb port handshake loses a race, and tends to appear after many
+// back-to-back sessions on one long-lived emulator. Retrying re-establishes
+// a fresh driver session; a genuine assertion failure (e.g. expected 418 but
+// saw 200) does NOT carry this signature and is returned immediately so real
+// regressions still fail fast.
+func runMaestroWithRetry(t *testing.T, flowPath string) (string, error) {
+	t.Helper()
+	const maxAttempts = 3
+	var lastOut string
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		cmd := exec.Command(maestroPath, "test", flowPath)
+		cmd.Dir = filepath.Dir(flowsDir) // e2e/
+		var buf bytes.Buffer
+		cmd.Stdout = &buf
+		cmd.Stderr = &buf
+		err := cmd.Run()
+		lastOut, lastErr = buf.String(), err
+		if err == nil {
+			return lastOut, nil
+		}
+		if !isMaestroDriverStartupFailure(lastOut) || attempt == maxAttempts {
+			return lastOut, err
+		}
+		t.Logf("maestro driver startup timed out (attempt %d/%d) — retrying", attempt, maxAttempts)
+	}
+	return lastOut, lastErr
+}
+
+// isMaestroDriverStartupFailure detects the driver-startup-timeout signature
+// in Maestro's combined stdout/stderr. Matching on the message (rather than
+// the exit code) keeps the retry narrowly scoped to this one transient class
+// — every other non-zero exit (assertion failed, element not found, app not
+// installed) falls through to an immediate failure.
+func isMaestroDriverStartupFailure(output string) bool {
+	return strings.Contains(output, "Android driver did not start up in time") ||
+		strings.Contains(output, "AndroidDriverTimeoutException")
 }

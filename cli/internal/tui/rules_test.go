@@ -182,6 +182,81 @@ func TestViewShowsDeviceStatusMessage(t *testing.T) {
 	}
 }
 
+// TestViewIncludesBodyForBodyOverrideRules: the rule row must surface the
+// body preview / bodyFile path / header count so users can confirm "this
+// is the rule I meant to toggle" without bouncing out to `forja rules
+// list` or the yml file. Each field is independent and only appears when
+// the corresponding rule field is set.
+func TestViewIncludesBodyForBodyOverrideRules(t *testing.T) {
+	rules := []config.EffectiveRule{
+		{Rule: config.Rule{Name: "string-body", Enabled: false,
+			Match:    config.Match{Host: "example.com"},
+			Response: config.Response{Status: 500, Body: &config.BodyValue{String: `{"message":"failure"}`}}},
+			Scope: config.ScopeProject},
+		{Rule: config.Rule{Name: "empty-body", Enabled: false,
+			Match:    config.Match{Host: "example.com"},
+			Response: config.Response{Status: 204, Body: &config.BodyValue{String: ""}}},
+			Scope: config.ScopeProject},
+		{Rule: config.Rule{Name: "file-body", Enabled: false,
+			Match:    config.Match{Host: "example.com"},
+			Response: config.Response{Status: 200, BodyFile: "responses/big.json"}},
+			Scope: config.ScopeProject},
+		{Rule: config.Rule{Name: "headers-only", Enabled: false,
+			Match: config.Match{Host: "example.com"},
+			Response: config.Response{Status: 200,
+				Headers: map[string]string{"Content-Type": "text/html", "X-Forja": "1"}}},
+			Scope: config.ScopeProject},
+		{Rule: config.Rule{Name: "no-body", Enabled: false,
+			Match:    config.Match{Host: "example.com"},
+			Response: config.Response{Status: 418}},
+			Scope: config.ScopeProject},
+	}
+	m := NewRulesModel("com.example.app", rules, DeviceStatus{})
+	view := m.View()
+
+	// JSON-shaped string body renders as the quoted preview.
+	if !strings.Contains(view, `body='{"message":"failure"}'`) {
+		t.Errorf("string body preview missing: %s", view)
+	}
+	// Explicit empty body must show as `body=''` so it's visibly distinct
+	// from "no body override" (where the body= fragment is absent).
+	if !strings.Contains(view, "body=''") {
+		t.Errorf("empty body marker missing: %s", view)
+	}
+	// bodyFile path appears verbatim — no truncation, no quoting (it's a
+	// file reference, not a body value).
+	if !strings.Contains(view, "bodyFile=responses/big.json") {
+		t.Errorf("bodyFile path missing: %s", view)
+	}
+	// Header count rather than the individual entries — keeps the row
+	// compact while signalling "this rule rewrites headers".
+	if !strings.Contains(view, "headers=2") {
+		t.Errorf("header count missing: %s", view)
+	}
+	// The no-body row must NOT carry any of these markers.
+	for _, marker := range []string{"body=", "bodyFile=", "headers="} {
+		if strings.Count(view, marker) == 0 {
+			continue
+		}
+		// Each marker should appear at most once per relevant row above;
+		// if it shows up next to "no-body" the responseExtras helper has
+		// regressed and is emitting it unconditionally.
+		idx := strings.Index(view, "no-body")
+		if idx < 0 {
+			continue
+		}
+		// Slice the row containing no-body and check that no marker leaked.
+		lineEnd := strings.Index(view[idx:], "\n")
+		if lineEnd < 0 {
+			lineEnd = len(view) - idx
+		}
+		row := view[idx : idx+lineEnd]
+		if strings.Contains(row, marker) {
+			t.Errorf("no-body row should not carry %q; got: %s", marker, row)
+		}
+	}
+}
+
 func TestViewLiveMarkerWhenAttached(t *testing.T) {
 	rules := []config.EffectiveRule{
 		{Rule: config.Rule{Name: "a", Enabled: true, Match: config.Match{Host: "example.com"}, Response: config.Response{Status: 500}},

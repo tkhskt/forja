@@ -25,6 +25,18 @@ const (
 // Load reads a RulesFile from disk. If the file is missing it returns nil
 // without an error, since "no rules yet" is a valid state for `rules add`
 // to create the file from scratch.
+//
+// Load enforces a same-file uniqueness invariant on rule names: a yml
+// file with two entries sharing a name is rejected with an error pointing
+// at the offending name + indices. This catches hand-edit mistakes that
+// `rules add`'s in-process duplicate guard cannot see; without it, callers
+// would silently push two-entry wire JSON in which the second copy is
+// invisible to the on-device first-match interceptor, and CLI operations
+// like `update`/`remove` would only ever touch the first one.
+//
+// Cross-scope uniqueness (= same name in rules.yml and rules.local.yml) is
+// a stricter contract enforced one layer up by rules.loadBothScopes, since
+// that layer is the one that has visibility into both files at once.
 func Load(path string) (*RulesFile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -37,7 +49,29 @@ func Load(path string) (*RulesFile, error) {
 	if err := yaml.Unmarshal(data, &rf); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
+	if dup, i, j, ok := firstDuplicateRuleName(rf.Rules); ok {
+		return nil, fmt.Errorf(
+			"%s: duplicate rule name %q at entries %d and %d — rule names must be unique within a single yml file",
+			path, dup, i, j,
+		)
+	}
 	return &rf, nil
+}
+
+// firstDuplicateRuleName scans rules in declaration order and returns the
+// first name that appears twice along with the indices of both occurrences.
+// Reporting the first hit (rather than collecting all duplicates) keeps the
+// error message short and points the user at a concrete spot to fix; once
+// they resolve it, a re-load surfaces the next one (if any).
+func firstDuplicateRuleName(rules []Rule) (name string, first, second int, found bool) {
+	seen := make(map[string]int, len(rules))
+	for i, r := range rules {
+		if prev, ok := seen[r.Name]; ok {
+			return r.Name, prev, i, true
+		}
+		seen[r.Name] = i
+	}
+	return "", 0, 0, false
 }
 
 // Save writes the RulesFile to disk. The parent directory must already
@@ -281,7 +315,9 @@ func SaveStatus(path string, s Status) error {
 
 // EffectiveRule is one rule plus context the rule layer needs after merging:
 // the scope it came from (for TUI section header) and the directory of the
-// source yml file (for resolving relative bodyFile paths).
+// source yml file (for resolving relative bodyFile paths). Rule names are
+// required to be unique across both scopes (the rules layer validates this
+// when loading both files together), so no per-entry shadow flag is needed.
 type EffectiveRule struct {
 	Rule
 	Scope   string // "project" or "local"
@@ -329,14 +365,18 @@ func (er *EffectiveRule) ResolveBody() (*BodyValue, error) {
 }
 
 // Effective merges project + local rules and applies the per-app status to
-// produce the rule list for a specific app. Local rules win in two ways:
+// produce the rule list for a specific app. Rule names are unique across
+// both scopes (the rules layer rejects cross-scope name duplicates on load
+// and on add), so this function is a straight concat:
 //
-//  1. Name collision (= same rule name in both scopes): the project entry is
-//     dropped, the local entry survives.
-//  2. Match collision (= different names, but both would match the same
-//     request): the on-device interceptor uses first-match-wins, so the
-//     local rule must appear earlier in the slice. We emit local rules
-//     first then project rules for exactly this reason.
+//   - local rules first (in declaration order)
+//   - project rules second (in declaration order)
+//
+// The local-first ordering matches the on-device interceptor's first-match
+// semantics — if two rules with different names happen to match the same
+// request, the local one fires first. Same-request match collision is the
+// only collision Effective has to think about; name-level collisions are
+// caught upstream.
 //
 // projectDir and localDir are the directories of the yml files each scope
 // came from. They're propagated to each EffectiveRule.BaseDir so relative
@@ -345,13 +385,6 @@ func (er *EffectiveRule) ResolveBody() (*BodyValue, error) {
 // `app` is the target Android applicationId; each returned rule's Enabled
 // field is set based on the per-app enabled list in status (absent = disabled).
 func Effective(project *RulesFile, projectDir string, local *RulesFile, localDir string, status Status, app string) []EffectiveRule {
-	localNames := map[string]int{}
-	if local != nil {
-		for i, r := range local.Rules {
-			localNames[r.Name] = i
-		}
-	}
-
 	out := make([]EffectiveRule, 0)
 	if local != nil {
 		for _, r := range local.Rules {
@@ -362,9 +395,6 @@ func Effective(project *RulesFile, projectDir string, local *RulesFile, localDir
 	}
 	if project != nil {
 		for _, r := range project.Rules {
-			if _, shadowed := localNames[r.Name]; shadowed {
-				continue
-			}
 			rr := r
 			rr.Enabled = status.IsEnabled(app, r.Name)
 			out = append(out, EffectiveRule{Rule: rr, Scope: ScopeProject, BaseDir: projectDir})

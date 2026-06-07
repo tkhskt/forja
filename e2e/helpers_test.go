@@ -278,15 +278,11 @@ func maestroFlow(t *testing.T, name string) string {
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("maestro flow %s not found: %v", path, err)
 	}
-	cmd := exec.Command(maestroPath, "test", path)
-	cmd.Dir = filepath.Dir(flowsDir) // e2e/
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("maestro test %s failed: %v\n--- output ---\n%s", name, err, buf.String())
+	out, err := runMaestroWithRetry(t, path)
+	if err != nil {
+		t.Fatalf("maestro test %s failed: %v\n--- output ---\n%s", name, err, out)
 	}
-	return buf.String()
+	return out
 }
 
 // --- forja state helpers -----------------------------------------------

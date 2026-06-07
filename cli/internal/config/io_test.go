@@ -19,6 +19,89 @@ func TestLoadMissingReturnsNil(t *testing.T) {
 	}
 }
 
+// TestLoadRejectsDuplicateNamesInSameFile: hand-edited yml with two rules
+// sharing a name must be refused at Load — silently accepting it would
+// surface as confusing "update/remove only touches one of them" behavior
+// downstream and as a buggy two-entry wire JSON whose second copy is
+// invisible to the on-device first-match interceptor.
+//
+// The error message must include both the offending name and its indices
+// so the user can find the spots in the file without grepping.
+func TestLoadRejectsDuplicateNamesInSameFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rules.yml")
+	src := `
+rules:
+  - name: foo
+    match:
+      host: example.com
+    response:
+      status: 418
+  - name: bar
+    response:
+      status: 200
+  - name: foo
+    match:
+      host: other.example.com
+    response:
+      status: 500
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected Load to reject duplicate names; got success")
+	}
+	for _, want := range []string{"foo", "duplicate", "0", "2"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q; got: %v", want, err)
+		}
+	}
+}
+
+// TestLoadAllowsCrossScopeDuplicatesAtFileLevel: config.Load is per-file
+// and intentionally does NOT cross-validate. Each file independently
+// rejects same-name duplicates within itself; cross-scope rejection is
+// enforced one layer up by rules.loadBothScopes (see rules_test.go for
+// that contract). This test pins the per-file boundary so the layering
+// stays clear.
+func TestLoadAllowsCrossScopeDuplicatesAtFileLevel(t *testing.T) {
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "rules.yml")
+	localPath := filepath.Join(dir, "rules.local.yml")
+	const sharedName = "shared"
+
+	if err := os.WriteFile(projectPath, []byte(`
+rules:
+  - name: `+sharedName+`
+    response:
+      status: 418
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte(`
+rules:
+  - name: `+sharedName+`
+    response:
+      status: 503
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	project, err := Load(projectPath)
+	if err != nil {
+		t.Fatalf("Load(project): %v", err)
+	}
+	local, err := Load(localPath)
+	if err != nil {
+		t.Fatalf("Load(local): %v", err)
+	}
+	if project.FindRule(sharedName) == nil || local.FindRule(sharedName) == nil {
+		t.Fatalf("each file should load independently")
+	}
+}
+
 // TestLoadCommentOnlyFileGivesEmptyRulesFile: `forja init` writes a comment-
 // only template (no `rules: []` placeholder), so Load + AddRule + Save must
 // work end-to-end against that shape. yaml.v3 should parse the file into a

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/tkhskt/forja/internal/config"
 )
@@ -317,31 +316,3 @@ func TestFormatRuleLineFieldRendering(t *testing.T) {
 	}
 }
 
-// TestFormatBodyPreviewTruncationBoundary: a body exactly at the cap stays
-// inline; one character over triggers the truncated form. Locks the off-by-
-// one behavior so refactors of bodyPreviewMaxRunes can't silently regress.
-func TestFormatBodyPreviewTruncationBoundary(t *testing.T) {
-	at := strings.Repeat("x", bodyPreviewMaxRunes)
-	over := strings.Repeat("x", bodyPreviewMaxRunes+1)
-	if got := formatBodyPreview(at); strings.Contains(got, "...") {
-		t.Errorf("body of exactly %d chars should not be truncated; got %s", bodyPreviewMaxRunes, got)
-	}
-	if got := formatBodyPreview(over); !strings.Contains(got, "...") {
-		t.Errorf("body of %d chars should be truncated; got %s", bodyPreviewMaxRunes+1, got)
-	}
-}
-
-// TestFormatBodyPreviewMultibyteSafe: truncation must split on rune
-// boundaries so multi-byte UTF-8 sequences never get sliced in half.
-func TestFormatBodyPreviewMultibyteSafe(t *testing.T) {
-	// 50 Japanese chars (each 3 bytes in UTF-8) → 150 bytes, 50 runes.
-	in := strings.Repeat("あ", 50)
-	got := formatBodyPreview(in)
-	if !strings.Contains(got, "(50 chars)") {
-		t.Errorf("rune count suffix wrong: %s", got)
-	}
-	// The preview should still be valid UTF-8 (no broken multi-byte sequences).
-	if !utf8.ValidString(got) {
-		t.Errorf("preview produced invalid UTF-8: %q", got)
-	}
-}
