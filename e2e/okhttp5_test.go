@@ -26,11 +26,11 @@ func TestOkHttp5BasicRewrite(t *testing.T) {
 	clearLogcat(t)
 
 	runForja(t, "rules", "add", "ok5-mock",
-		"--app", AppOk5Dev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"by":"forja-ok5"}`,
 	)
+	runForja(t, "apply", "--app", AppOk5Dev, "--enable", "ok5-mock")
 
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 	waitForLogcat(t, "self-destruct mode enabled", 5*time.Second, "ForjaAgent")
@@ -77,10 +77,10 @@ func TestOkHttp5OffRestoresOriginalResponse(t *testing.T) {
 	startMainActivity(t, AppOk5Dev)
 
 	runForja(t, "rules", "add", "ok5-off",
-		"--app", AppOk5Dev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 	)
+	runForja(t, "apply", "--app", AppOk5Dev, "--enable", "ok5-off")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 	runInlineMaestro(t, `
 appId: com.tkhskt.forja.sample.ok5

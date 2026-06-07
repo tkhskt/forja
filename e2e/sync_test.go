@@ -26,11 +26,11 @@ func TestSyncAfterAddImmediatelyEffective(t *testing.T) {
 	clearLogcat(t)
 
 	runForja(t, "rules", "add", "immediate",
-		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "immediate")
 	waitForLogcat(t, "self-destruct mode enabled", 30*time.Second, "ForjaAgent")
 	maestroFlow(t, "tap_singleton_assert_418.yaml")
 }
@@ -43,10 +43,10 @@ func TestSyncUpdatePatchAppliesToDevice(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "iter",
-		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "iter")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 	maestroFlow(t, "tap_singleton_assert_418.yaml")
 
@@ -74,10 +74,10 @@ func TestSyncRemoveDropsFromDevice(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "ephemeral",
-		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "ephemeral")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 	maestroFlow(t, "tap_singleton_assert_418.yaml")
 
@@ -96,12 +96,13 @@ func TestSyncOffStatusDisablesAllInJSON(t *testing.T) {
 	// All three rules added with --app so each is enabled on AppDev (sugar
 	// path). x is in user scope (default), z in project (via --project), y
 	// also user. After this, status.json[AppDev].enabled = [x, y, z].
-	runForja(t, "rules", "add", "x", "--app", AppDev,
-		"--host", "example.com", "--status", "418")
-	runForja(t, "rules", "add", "y", "--app", AppDev,
-		"--host", "example.com", "--path", "/x", "--status", "503")
-	runForja(t, "rules", "add", "z", "--app", AppDev, "--project",
+	runForja(t, "rules", "add", "x", "--host", "example.com", "--status", "418")
+	runForja(t, "apply", "--app", AppDev, "--enable", "x")
+	runForja(t, "rules", "add", "y", "--host", "example.com", "--path", "/x", "--status", "503")
+	runForja(t, "apply", "--app", AppDev, "--enable", "y")
+	runForja(t, "rules", "add", "z", "--project",
 		"--host", "example.com", "--path", "/y", "--status", "401")
+	runForja(t, "apply", "--app", AppDev, "--enable", "z")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 
 	runForja(t, "off", "--app", AppDev)
@@ -127,10 +128,10 @@ func TestSyncProcessKillThenNewPushReAttaches(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "rk",
-		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "rk")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 	maestroFlow(t, "tap_singleton_assert_418.yaml")
 
@@ -171,8 +172,8 @@ func TestSyncNoOpUpdateIsIdempotent(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "noop",
-		"--app", AppDev,
 		"--host", "example.com", "--status", "418")
+	runForja(t, "apply", "--app", AppDev, "--enable", "noop")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 
 	// Calling update with no fields shouldn't change anything but also
@@ -199,12 +200,13 @@ func TestSyncProjectAndUserBothPushed(t *testing.T) {
 	// catalog entry — not yet pushed to any device.
 	runForja(t, "rules", "add", "team-rule", "--project",
 		"--host", "team.example.com", "--status", "200")
-	// user-rule (user scope) added with --app → enabled on AppDev + pushed.
-	runForja(t, "rules", "add", "user-rule", "--app", AppDev,
+	// user-rule (user scope) added, then enabled on AppDev and pushed.
+	runForja(t, "rules", "add", "user-rule",
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "user-rule")
 	// Enable team-rule on AppDev too so both scopes' rules are effective.
 	runForja(t, "apply", "--app", AppDev, "--enable", "team-rule")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
@@ -225,10 +227,10 @@ func TestSyncManualYmlEditTakesEffectOnNextCommand(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "hand-edit",
-		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "hand-edit")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 	maestroFlow(t, "tap_singleton_assert_418.yaml")
 
@@ -272,9 +274,10 @@ func TestSyncManualYmlAddNewRuleIsPicked(t *testing.T) {
 
 	// A stub rule on /unused — its only job is to bring up the agent. The
 	// hand-added rule on / is what should actually take effect.
-	runForja(t, "rules", "add", "stub", "--app", AppDev,
+	runForja(t, "rules", "add", "stub",
 		"--host", "example.com", "--path", "/unused", "--status", "200",
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "stub")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 
 	// Append a fresh catalog entry to rules.local.yml by hand. Indentation
@@ -321,17 +324,20 @@ func TestSyncManualYmlRemoveRuleDropsFromDevice(t *testing.T) {
 	forceStop(t, AppDev)
 	startMainActivity(t, AppDev)
 
-	runForja(t, "rules", "add", "doomed", "--app", AppDev,
+	runForja(t, "rules", "add", "doomed",
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "doomed")
 	// A second rule (also enabled on AppDev) we can `update --no-op` against
-	// to trigger re-sync after the doomed entry is gone. Without --app, keep
-	// would be yml-only and update wouldn't auto-propagate anywhere.
-	runForja(t, "rules", "add", "keep", "--app", AppDev,
+	// to trigger re-sync after the doomed entry is gone. Without an apply
+	// on AppDev, keep would be yml-only and update wouldn't auto-propagate
+	// anywhere.
+	runForja(t, "rules", "add", "keep",
 		"--host", "example.com", "--path", "/unused",
 		"--status", "200",
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "keep")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 	maestroFlow(t, "tap_singleton_assert_418.yaml")
 
@@ -369,10 +375,10 @@ func TestSyncOffPushesEmptyArray(t *testing.T) {
 	clearLogcat(t)
 
 	runForja(t, "rules", "add", "before-off",
-		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "before-off")
 	waitForLogcat(t, "self-destruct mode enabled", 30*time.Second, "ForjaAgent")
 	maestroFlow(t, "tap_singleton_assert_418.yaml")
 
@@ -398,11 +404,11 @@ func TestSyncCommandReflectsManualBodyEdit(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "synced-body",
-		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"before":"sync"}`,
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "synced-body")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 	runInlineMaestro(t, `
 appId: com.tkhskt.forja.sample
@@ -461,11 +467,11 @@ func TestSyncCommandPkgFilterOnlyAffectsTarget(t *testing.T) {
 
 	// Enable a single rule on both apps with the same starting body.
 	runForja(t, "rules", "add", "filter-rule",
-		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"phase":"before"}`,
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "filter-rule")
 	runForja(t, "apply", "--app", AppStaging, "--enable", "filter-rule")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 

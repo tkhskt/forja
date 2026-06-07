@@ -11,11 +11,11 @@ import (
 func makeModel() RulesModel {
 	rules := []config.EffectiveRule{
 		{Rule: config.Rule{Name: "a", Enabled: true,
-			Match:    config.Match{Host: "x.com"},
+			Match:    config.Match{Host: "example.com"},
 			Response: config.Response{Status: 500}},
 			Scope: config.ScopeProject},
 		{Rule: config.Rule{Name: "b", Enabled: false,
-			Match:    config.Match{Host: "y.com"},
+			Match:    config.Match{Host: "other.com"},
 			Response: config.Response{Status: 200}},
 			Scope: config.ScopeProject},
 		{Rule: config.Rule{Name: "c", Enabled: true,
@@ -169,7 +169,7 @@ func TestToggleNoopOnEmpty(t *testing.T) {
 
 func TestViewShowsDeviceStatusMessage(t *testing.T) {
 	rules := []config.EffectiveRule{
-		{Rule: config.Rule{Name: "a", Enabled: true, Match: config.Match{Host: "x.com"}, Response: config.Response{Status: 500}},
+		{Rule: config.Rule{Name: "a", Enabled: true, Match: config.Match{Host: "example.com"}, Response: config.Response{Status: 500}},
 			Scope: config.ScopeProject},
 	}
 	m := NewRulesModel("com.foo", rules, DeviceStatus{
@@ -184,7 +184,7 @@ func TestViewShowsDeviceStatusMessage(t *testing.T) {
 
 func TestViewLiveMarkerWhenAttached(t *testing.T) {
 	rules := []config.EffectiveRule{
-		{Rule: config.Rule{Name: "a", Enabled: true, Match: config.Match{Host: "x.com"}, Response: config.Response{Status: 500}},
+		{Rule: config.Rule{Name: "a", Enabled: true, Match: config.Match{Host: "example.com"}, Response: config.Response{Status: 500}},
 			Scope: config.ScopeLocal},
 	}
 	m := NewRulesModel("com.foo", rules, DeviceStatus{

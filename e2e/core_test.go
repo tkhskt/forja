@@ -23,13 +23,13 @@ func TestCoreBasicRewrite(t *testing.T) {
 	clearLogcat(t)
 
 	runForja(t, "rules", "add", "mock-teapot",
-		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "mock-teapot")
 
-	// The auto-push during `rules add` should attach + push. Wait for the
+	// The auto-push during `apply` should attach + push. Wait for the
 	// JVMTI attach log line as a stable signal that the agent is live.
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 	waitForLogcat(t, "self-destruct mode enabled", 5*time.Second, "ForjaAgent")
@@ -58,9 +58,9 @@ func TestCoreSelfDestruct(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "x",
-		"--app", AppDev,
 		"--host", "example.com", "--status", "418",
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "x")
 	waitForLogcat(t, "self-destruct mode enabled", 30*time.Second, "ForjaAgent")
 
 	// The agent reads + deletes on the first interceptor call. To make that
@@ -91,11 +91,11 @@ func TestCoreProcessKillClearsRules(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "kill-test",
-		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "kill-test")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 	// Confirm baseline behavior first: the rule IS in effect.
 	clearLogcat(t)
@@ -126,16 +126,16 @@ func TestCoreOff(t *testing.T) {
 	// Both rules added with --app so they're enabled on AppDev via the sugar
 	// path (yml + status.enable + push).
 	runForja(t, "rules", "add", "a",
-		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "a")
 	runForja(t, "rules", "add", "b",
-		"--app", AppDev,
 		"--host", "example.com", "--path", "/other",
 		"--status", "503",
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "b")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 
 	// Sanity: before off, both should be in AppDev's enabled list.
@@ -172,11 +172,11 @@ func TestCoreBodyFile(t *testing.T) {
 	mkForjaResponsesDir(t, "teapot_response.json")
 
 	runForja(t, "rules", "add", "bodyfile-rule",
-		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body-file", "responses/teapot_response.json",
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "bodyfile-rule")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 
 	// The fixture contains the string "forja-e2e"; assert UI shows it.

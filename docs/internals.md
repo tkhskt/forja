@@ -2,7 +2,7 @@
 
 ## Overview
 
-When forja pushes to a device (via `forja apply`, the `rules` TUI's save action, `rules add --app X`, `forja sync`, or the auto-propagation of `rules update/remove`):
+When forja pushes to a device (via `forja apply`, the `rules` TUI's save action, `forja sync`, or the auto-propagation of `rules update/remove`):
 
 1. For each target app, check whether the app is running (`pidof <app>`)
 2. If the PID differs from the cached one, the app was restarted, so re-attach the agent via `adb shell cmd activity attach-agent`

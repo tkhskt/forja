@@ -30,9 +30,9 @@ func newApplyCmd() *cobra.Command {
 		Long: `Patch the per-app enabled state in forja/status.json and push the new
 effective rule set to the device.
 
-  forja apply --app com.x --enable teapot,dev-mock
-  forja apply --app com.x --disable teapot
-  forja apply --app com.x --enable teapot --disable dev-mock
+  forja apply --app com.example.app --enable teapot,dev-mock
+  forja apply --app com.example.app --disable teapot
+  forja apply --app com.example.app --enable teapot --disable dev-mock
 
 At least one of --enable / --disable is required; pass --enable to add rule
 names to the app's enabled list, --disable to remove them.

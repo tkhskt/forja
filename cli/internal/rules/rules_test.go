@@ -25,7 +25,7 @@ func pathsIn(t *testing.T) Paths {
 
 func TestAddYmlOnlyByDefault(t *testing.T) {
 	p := pathsIn(t)
-	err := Add(p, ScopeLocal, AddOptions{Name: "mock", Host: "x.com", Status: 500})
+	err := Add(p, ScopeLocal, AddOptions{Name: "mock", Host: "example.com", Status: 500})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -169,11 +169,11 @@ func TestEnableAddsToPkgEnabledList(t *testing.T) {
 	p := pathsIn(t)
 	_ = Add(p, ScopeLocal, AddOptions{Name: "foo"})
 	_ = Add(p, ScopeLocal, AddOptions{Name: "bar"})
-	if err := Enable(p, "com.x", []string{"foo", "bar"}); err != nil {
+	if err := Enable(p, "com.example.app", []string{"foo", "bar"}); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
 	st, _ := config.LoadStatus(p.Status)
-	if !st.IsEnabled("com.x", "foo") || !st.IsEnabled("com.x", "bar") {
+	if !st.IsEnabled("com.example.app", "foo") || !st.IsEnabled("com.example.app", "bar") {
 		t.Errorf("Enable did not record entries: %+v", st)
 	}
 }
@@ -181,13 +181,13 @@ func TestEnableAddsToPkgEnabledList(t *testing.T) {
 func TestEnableRejectsUnknownRuleNames(t *testing.T) {
 	p := pathsIn(t)
 	_ = Add(p, ScopeLocal, AddOptions{Name: "real"})
-	err := Enable(p, "com.x", []string{"real", "typo"})
+	err := Enable(p, "com.example.app", []string{"real", "typo"})
 	if err == nil {
 		t.Error("expected error for unknown rule 'typo'")
 	}
 	// Real should not have been added either (early reject).
 	st, _ := config.LoadStatus(p.Status)
-	if st.IsEnabled("com.x", "real") {
+	if st.IsEnabled("com.example.app", "real") {
 		t.Errorf("Enable should be atomic — 'real' should not be set when 'typo' is bogus")
 	}
 }
@@ -195,12 +195,12 @@ func TestEnableRejectsUnknownRuleNames(t *testing.T) {
 func TestDisableRemovesFromPkgEnabledList(t *testing.T) {
 	p := pathsIn(t)
 	_ = Add(p, ScopeLocal, AddOptions{Name: "foo"})
-	_ = Enable(p, "com.x", []string{"foo"})
-	if err := Disable(p, "com.x", []string{"foo"}); err != nil {
+	_ = Enable(p, "com.example.app", []string{"foo"})
+	if err := Disable(p, "com.example.app", []string{"foo"}); err != nil {
 		t.Fatalf("Disable: %v", err)
 	}
 	st, _ := config.LoadStatus(p.Status)
-	if st.IsEnabled("com.x", "foo") {
+	if st.IsEnabled("com.example.app", "foo") {
 		t.Errorf("foo should be disabled: %+v", st)
 	}
 }
@@ -208,7 +208,7 @@ func TestDisableRemovesFromPkgEnabledList(t *testing.T) {
 func TestDisableIgnoresUnknownRuleNames(t *testing.T) {
 	p := pathsIn(t)
 	// No yml entries at all — Disable should silently no-op for typo scrubbing.
-	if err := Disable(p, "com.x", []string{"never-existed"}); err != nil {
+	if err := Disable(p, "com.example.app", []string{"never-existed"}); err != nil {
 		t.Errorf("Disable of unknown name should not error: %v", err)
 	}
 }
@@ -216,12 +216,12 @@ func TestDisableIgnoresUnknownRuleNames(t *testing.T) {
 func TestClearAppEmptiesEnabledList(t *testing.T) {
 	p := pathsIn(t)
 	_ = Add(p, ScopeLocal, AddOptions{Name: "foo"})
-	_ = Enable(p, "com.x", []string{"foo"})
-	if err := ClearApp(p, "com.x"); err != nil {
+	_ = Enable(p, "com.example.app", []string{"foo"})
+	if err := ClearApp(p, "com.example.app"); err != nil {
 		t.Fatalf("ClearApp: %v", err)
 	}
 	st, _ := config.LoadStatus(p.Status)
-	if st.IsEnabled("com.x", "foo") {
+	if st.IsEnabled("com.example.app", "foo") {
 		t.Errorf("foo should be cleared: %+v", st)
 	}
 }
@@ -231,16 +231,16 @@ func TestSetEnabledForAppOverwrites(t *testing.T) {
 	_ = Add(p, ScopeLocal, AddOptions{Name: "a"})
 	_ = Add(p, ScopeLocal, AddOptions{Name: "b"})
 	_ = Add(p, ScopeLocal, AddOptions{Name: "c"})
-	_ = Enable(p, "com.x", []string{"a", "b"})
+	_ = Enable(p, "com.example.app", []string{"a", "b"})
 	// Overwrite with a new set — b should go away, c should appear.
-	if err := SetEnabledForApp(p, "com.x", []string{"a", "c"}); err != nil {
+	if err := SetEnabledForApp(p, "com.example.app", []string{"a", "c"}); err != nil {
 		t.Fatalf("SetEnabledForApp: %v", err)
 	}
 	st, _ := config.LoadStatus(p.Status)
-	if !st.IsEnabled("com.x", "a") || !st.IsEnabled("com.x", "c") {
+	if !st.IsEnabled("com.example.app", "a") || !st.IsEnabled("com.example.app", "c") {
 		t.Errorf("a and c should be enabled: %+v", st)
 	}
-	if st.IsEnabled("com.x", "b") {
+	if st.IsEnabled("com.example.app", "b") {
 		t.Errorf("b should have been removed: %+v", st)
 	}
 }
@@ -251,10 +251,10 @@ func TestLoadEffectiveMergesAndOverridesPerApp(t *testing.T) {
 	_ = Add(p, ScopeProject, AddOptions{Name: "team-b", Status: 200})
 	_ = Add(p, ScopeLocal, AddOptions{Name: "team-b", Status: 999})
 	_ = Add(p, ScopeLocal, AddOptions{Name: "personal", Status: 418})
-	// Enable on com.x: team-b (shadowed user) + personal only — leave team-a off.
-	_ = Enable(p, "com.x", []string{"team-b", "personal"})
+	// Enable on com.example.app: team-b (shadowed user) + personal only — leave team-a off.
+	_ = Enable(p, "com.example.app", []string{"team-b", "personal"})
 
-	rules, err := LoadEffective(p, "com.x")
+	rules, err := LoadEffective(p, "com.example.app")
 	if err != nil {
 		t.Fatalf("LoadEffective: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestLoadEffectiveMergesAndOverridesPerApp(t *testing.T) {
 		t.Errorf("rules[1]: %+v", rules[1])
 	}
 	if rules[2].Name != "team-a" || rules[2].Enabled {
-		t.Errorf("rules[2] should be off (not enabled on com.x): %+v", rules[2])
+		t.Errorf("rules[2] should be off (not enabled on com.example.app): %+v", rules[2])
 	}
 }
 
@@ -295,7 +295,7 @@ func TestEffectiveOrderGivesUserPrecedenceOnMatchCollision(t *testing.T) {
 	_ = Add(p, ScopeProject, AddOptions{Name: "team-override", Host: "example.com", Status: 418})
 	_ = Add(p, ScopeLocal, AddOptions{Name: "user-override", Host: "example.com", Status: 999})
 
-	rules, err := LoadEffective(p, "com.x")
+	rules, err := LoadEffective(p, "com.example.app")
 	if err != nil {
 		t.Fatalf("LoadEffective: %v", err)
 	}
@@ -409,12 +409,12 @@ func TestResolveAliasWithNoFileWorks(t *testing.T) {
 	// No aliases file at all — the resolver should silently treat every
 	// input as a literal applicationId.
 	p := pathsIn(t)
-	got, err := ResolveAlias(p, "com.x")
+	got, err := ResolveAlias(p, "com.example.app")
 	if err != nil {
 		t.Fatalf("ResolveAlias without file: %v", err)
 	}
-	if got != "com.x" {
-		t.Errorf("want com.x, got %q", got)
+	if got != "com.example.app" {
+		t.Errorf("want com.example.app, got %q", got)
 	}
 }
 
@@ -499,12 +499,12 @@ func TestAddAcceptsMultiByteName(t *testing.T) {
 	}
 	// Enable / Disable round-trip preserves the multi-byte name through
 	// status.json without normalization.
-	if err := Enable(p, "com.x", []string{name}); err != nil {
+	if err := Enable(p, "com.example.app", []string{name}); err != nil {
 		t.Fatalf("Enable multi-byte name: %v", err)
 	}
 	st, _ := config.LoadStatus(p.Status)
-	if !st.IsEnabled("com.x", name) {
-		t.Errorf("multi-byte name %q should be in com.x's enabled list, got %+v", name, st)
+	if !st.IsEnabled("com.example.app", name) {
+		t.Errorf("multi-byte name %q should be in com.example.app.s enabled list, got %+v", name, st)
 	}
 }
 

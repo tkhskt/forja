@@ -43,25 +43,48 @@ export PATH="$HOME/.local/bin:$PATH"
 
 Rule definitions and per-app on/off state live in a `forja/` directory that forja maintains in your current working directory.
 
+### Basic workflow
+
 ```bash
-# 1. Add a rule and apply it to an app in one step
-forja rules add mock-failure --app com.tkhskt.sample_app \
+# 1. Add a rule to the catalog (yml only — nothing reaches the device yet)
+forja rules add mock-failure \
     --host example.com --path /foo \
     --status 500 --body '{"message":"failure"}'
 
-# 2. Iterate — auto-pushes to every app where the rule is enabled
-forja rules update mock-failure --status 502
+# 2. Open the TUI: pick an app from the device list,
+#    toggle the rule on, q to save & push
+forja rules
+```
 
-# 3. Or hand-edit the yml directly, then push with `sync`
+Non-interactive equivalent of step 2: `forja apply --app com.example.app --enable mock-failure`.
+
+### Iterate on an enabled rule
+
+```bash
+# Patch any field — auto-pushes to every app where the rule is enabled
+forja rules update mock-failure --status 502
+```
+
+### Hand-edit the yml, then sync to the device
+
+```bash
 $EDITOR forja/rules.local.yml
 forja sync
+```
 
-# 4. TUI — pick an app, toggle rules, q to save & push
-forja rules
+`sync` re-reads the yml and pushes to every app already present in `status.json`, without changing which rules are enabled.
 
-# 5. Turn off all rewrites on an app
+See [the rule schema reference](docs/usage.md#rule-schema) for the full yml structure (`match:` / `response:` groups, `bodyFile:`, scope conflict resolution, etc.).
+
+### Turn off all rewrites on an app
+
+```bash
 forja off --app com.tkhskt.sample_app
 ```
+
+The app starts seeing the real responses again; the rule catalog (yml) stays intact, so you can re-enable later via the TUI or `forja apply`.
+
+---
 
 Rules are **session-scoped on the device**: kill the app and the rewrites disappear; relaunch and push again to get them back. Nothing is persisted in the app's filesystem long enough to survive a process restart.
 

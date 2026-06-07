@@ -55,11 +55,11 @@ func TestMultiAppAttachIsolated(t *testing.T) {
 
 	// Add a rule targeting only dev.
 	runForja(t, "rules", "add", "dev-only",
-		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "dev-only")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 
 	// Bring dev to the foreground before tapping (both flavors are running;
@@ -97,11 +97,11 @@ func TestMultiAppOffOnlyAffectsTarget(t *testing.T) {
 
 	// Attach to dev.
 	runForja(t, "rules", "add", "dev-rule",
-		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "dev-rule")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 	startMainActivity(t, AppDev) // both flavors started → ensure dev is on top
 	maestroFlow(t, "tap_singleton_assert_418.yaml")
@@ -266,11 +266,11 @@ func TestMultiAppAttachBothSequentially(t *testing.T) {
 
 	// 1) Attach to dev.
 	runForja(t, "rules", "add", "dev-x",
-		"--app", AppDev,
 		"--host", "example.com", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "dev-x")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 
 	// Reset local state but keep dev attach cache; switch app focus to
@@ -281,10 +281,10 @@ func TestMultiAppAttachBothSequentially(t *testing.T) {
 	// targeted at staging.
 	clearLogcat(t)
 	runForja(t, "rules", "add", "staging-y",
-		"--app", AppStaging,
 		"--host", "example.com", "--path", "/",
 		"--status", "503",
 	)
+	runForja(t, "apply", "--app", AppStaging, "--enable", "staging-y")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 
 	// Tap staging's button and assert 503 — proves staging got the rule

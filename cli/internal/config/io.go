@@ -74,7 +74,7 @@ type AppStatus struct {
 // Lives in forja/status.json and is considered transient runtime state
 // (intended to be gitignored — forja does not touch your .gitignore for you).
 // The on-disk shape is a flat top-level map of app → {enabled},
-// e.g. `{"com.x": {"enabled": ["rule-a", "rule-b"]}, "com.y": {"enabled": []}}`.
+// e.g. `{"com.example.app": {"enabled": ["rule-a", "rule-b"]}, "com.example.other": {"enabled": []}}`.
 //
 // An app key that exists with an empty `enabled` list means "this app has
 // been touched by forja but currently has no rules active" (= the state right

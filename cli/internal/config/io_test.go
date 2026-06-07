@@ -74,7 +74,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	orig := &RulesFile{
 		Rules: []Rule{
 			{Name: "a", Enabled: true,
-				Match:    Match{Host: "x.com"},
+				Match:    Match{Host: "example.com"},
 				Response: Response{Status: 200, Body: &BodyValue{Object: map[string]any{"ok": true}}}},
 			{Name: "b", Enabled: false,
 				Match:    Match{Path: "/baz"},
@@ -132,21 +132,21 @@ func TestStatusPerPkgRoundTrip(t *testing.T) {
 
 func TestStatusEnableDisableMutations(t *testing.T) {
 	s := Status{}
-	s.Enable("com.x", "foo")
-	s.Enable("com.x", "bar")
-	s.Enable("com.x", "foo") // duplicate add → no-op
-	if got := len(s["com.x"].Enabled); got != 2 {
-		t.Errorf("want 2 enabled, got %d (%v)", got, s["com.x"].Enabled)
+	s.Enable("com.example.app", "foo")
+	s.Enable("com.example.app", "bar")
+	s.Enable("com.example.app", "foo") // duplicate add → no-op
+	if got := len(s["com.example.app"].Enabled); got != 2 {
+		t.Errorf("want 2 enabled, got %d (%v)", got, s["com.example.app"].Enabled)
 	}
-	s.Disable("com.x", "foo")
-	if s.IsEnabled("com.x", "foo") {
+	s.Disable("com.example.app", "foo")
+	if s.IsEnabled("com.example.app", "foo") {
 		t.Errorf("foo should be disabled after Disable")
 	}
-	if !s.IsEnabled("com.x", "bar") {
+	if !s.IsEnabled("com.example.app", "bar") {
 		t.Errorf("bar should still be enabled")
 	}
-	s.Disable("com.x", "nope") // disable of absent → no-op
-	if got := len(s["com.x"].Enabled); got != 1 {
+	s.Disable("com.example.app", "nope") // disable of absent → no-op
+	if got := len(s["com.example.app"].Enabled); got != 1 {
 		t.Errorf("want 1 enabled after disable, got %d", got)
 	}
 }
@@ -284,10 +284,10 @@ func TestToDeviceJSONEnabledOnly(t *testing.T) {
 	rf := &RulesFile{
 		Rules: []Rule{
 			{Name: "on", Enabled: true,
-				Match:    Match{Host: "x.com"},
+				Match:    Match{Host: "example.com"},
 				Response: Response{Status: 500, Body: &BodyValue{Object: map[string]any{"k": "v"}}}},
 			{Name: "off", Enabled: false,
-				Match:    Match{Host: "x.com"},
+				Match:    Match{Host: "example.com"},
 				Response: Response{Status: 200}},
 			{Name: "scalar-body", Enabled: true,
 				Match:    Match{Path: "/p"},

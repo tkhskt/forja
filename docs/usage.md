@@ -15,26 +15,16 @@ The yml file holds no information about which app a rule targets, so the same ru
 
 ## Workflow examples
 
-### 1. Add and apply in one step
-
-```bash
-forja rules add mock-failure --app com.tkhskt.sample_app \
-    --host example.com --path /foo \
-    --status 500 --body '{"message":"failure"}'
-```
-
-This appends the rule to `forja/rules.local.yml`, enables it on the named app in `status.json`, and pushes to the device.
-
-### 2. Add to the catalog only, apply later
+### 1. Add a rule, then apply it to an app
 
 ```bash
 forja rules add slow-bar --host example.com --path /bar --status 503
 forja apply --app com.tkhskt.sample_app --enable slow-bar
 ```
 
-Useful when you want a shared catalog but per-developer enable choices.
+`rules add` only writes to `forja/rules.local.yml`. `apply` is what actually flips `status.json` and pushes the new effective ruleset to the device.
 
-### 3. Iterate
+### 2. Iterate
 
 ```bash
 forja rules update mock-failure --status 502
@@ -42,7 +32,7 @@ forja rules update mock-failure --status 502
 
 Patch semantics — only the fields you pass change. Auto-pushes to every app where the rule is currently enabled.
 
-### 4. Hand-edit the yml, then sync
+### 3. Hand-edit the yml, then sync
 
 ```bash
 $EDITOR forja/rules.local.yml
@@ -52,7 +42,7 @@ forja sync --app dev       # or just one app (alias or full name)
 
 `sync` is read-only on `status.json` — it never changes which rules are enabled, only re-pushes the current effective set so a hand edit reaches the device.
 
-### 5. Toggle interactively (TUI)
+### 4. Toggle interactively (TUI)
 
 ```bash
 forja rules                           # picks an app, then opens the toggle list
@@ -61,7 +51,7 @@ forja rules --app com.tkhskt.sample_app   # skip the picker
 
 Pressing `q` saves and pushes. Pressing `ctrl-c` discards changes.
 
-### 6. Clear an app
+### 5. Clear an app
 
 ```bash
 forja off --app com.tkhskt.sample_app
@@ -75,7 +65,7 @@ Turns off every rewrite on the named app, so the app sees the original (real) re
 
 | Command | Behavior |
 |---|---|
-| `forja rules add NAME [flags]` | Add to the catalog (yml only). With `--app X`, also **enables on X and pushes** (sugar) |
+| `forja rules add NAME [flags]` | Append a rule to the yml catalog. Does NOT push to any device — use `forja apply` or the TUI next |
 | `forja rules update NAME [flags]` | Patch the yml + **auto-push to every app where the rule is enabled**. `--no-sync` suppresses the push |
 | `forja rules remove NAME` | Delete from yml + **auto-push to every app where it was enabled** + drop the entry from every app in `status.json`. `--no-sync` suppresses the push |
 | `forja apply --app X --enable a,b [--disable c]` | Patch `status.json[X]` and push (one of `--enable`/`--disable` is required) |
@@ -102,8 +92,6 @@ forja apply --app com.acme.plugin --enable y  # unknown alias → treated as a l
 CLI flags stay flat; forja distributes them into the yml's `match:` / `response:` groups when it writes the file.
 
 ```
---app        sugar: after editing yml, also enable on the given app and push
-             (when omitted, only the yml is touched)
 --host       match: exact HTTP host           (→ match.host)
 --path       match: substring of encoded path (→ match.path)
 --status     response: HTTP status code       (→ response.status)
@@ -206,7 +194,7 @@ Only **the first matching rule** in the array is applied (OkHttp interceptor sem
 
 ### `forja/status.json`
 
-> **Don't edit this file by hand.** It's a CLI-managed mirror of what's currently pushed to each device. Manual edits won't reach the device and may be overwritten on the next `forja` invocation. The commands that write it are `forja apply`, the `rules` TUI's save action, `forja off`, `forja rules add --app X` (the sugar form), and `forja rules remove`.
+> **Don't edit this file by hand.** It's a CLI-managed mirror of what's currently pushed to each device. Manual edits won't reach the device and may be overwritten on the next `forja` invocation. The commands that write it are `forja apply`, the `rules` TUI's save action, `forja off`, and `forja rules remove`.
 >
 > The same warning ships inside the file as a top-level `$comment` key (JSON Schema-style metadata) so anyone opening it in an editor sees it on line 1. Any `$`-prefixed key is silently dropped on load, so the convention is forward-compatible with additional metadata (`$schema` etc.) without forja ever interpreting those entries as applicationIds.
 

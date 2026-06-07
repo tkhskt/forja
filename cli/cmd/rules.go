@@ -19,7 +19,6 @@ import (
 
 // rulesFlags is the merged set of CLI flags used by add / update / remove.
 type rulesFlags struct {
-	app      string
 	host     string
 	path     string
 	status   int
@@ -84,7 +83,7 @@ Use ↑↓/jk to navigate, space/enter to toggle enabled, q to push the new
 state to the chosen app and exit.
 
   forja rules                       interactive: pick app + edit toggles
-  forja rules --app com.x.y         interactive: skip picker, edit toggles for that app
+  forja rules --app com.example.app interactive: skip picker, edit toggles for that app
   forja rules add NAME ...          append a rule to the catalog (yml only)
   forja rules update NAME ...       patch an existing rule (auto-applied to enabled apps)
   forja rules remove NAME           delete a rule (auto-applied to enabled apps)`,
@@ -103,19 +102,16 @@ func newRulesAddCmd() *cobra.Command {
 	var f rulesFlags
 	c := &cobra.Command{
 		Use:   "add NAME",
-		Short: "Append a rule to the catalog (use --app to also enable+push to an app)",
+		Short: "Append a rule to the catalog (yml only — does not touch any device)",
 		Long: `Append a new rule to forja/rules.local.yml (local scope; you should
 gitignore this file) — or to forja/rules.yml (project scope, committed) when
 --project is passed.
 
-By default the new rule is NOT applied to any app. Use 'forja rules'
-(TUI), 'forja apply', or pass --app X here to also enable it on X and push.
+The newly added rule is NOT applied to any app. To turn it on, run
+'forja rules' (TUI) or 'forja apply --app X --enable NAME'.
 
   forja rules add teapot --host example.com --status 418
-      # yml only — pick targets later via TUI or 'forja apply'
-
-  forja rules add teapot --host example.com --status 418 --app com.tkhskt.forja.sample
-      # yml + enable on com.tkhskt.forja.sample + push to that app`,
+  forja apply --app com.tkhskt.forja.sample --enable teapot`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("body") && cmd.Flags().Changed("body-file") {
@@ -139,23 +135,10 @@ By default the new rule is NOT applied to any app. Use 'forja rules'
 				return err
 			}
 			fmt.Printf("added rule %q to %s scope\n", args[0], scope)
-			if f.app == "" {
-				return nil
-			}
-			// Sugar path: enable on the named app and push.
-			app, err := resolveApp(f.app)
-			if err != nil {
-				return err
-			}
-			if err := rules.Enable(paths, app, []string{args[0]}); err != nil {
-				return err
-			}
-			return pushToApp(app, "add")
+			return nil
 		},
 	}
 	bindRulesFlags(c, &f)
-	c.Flags().StringVar(&f.app, "app", "",
-		"also enable the new rule on this app (or alias) and push to the device")
 	return c
 }
 
