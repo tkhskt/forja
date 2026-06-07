@@ -297,7 +297,7 @@ func (er *EffectiveRule) ResolveBody() (*BodyValue, error) {
 	if er.Response.BodyFile == "" {
 		return er.Response.Body, nil
 	}
-	if er.Response.Body != nil && !er.Response.Body.IsEmpty() {
+	if er.Response.Body != nil {
 		return nil, fmt.Errorf("rule %q: cannot set both body and bodyFile", er.Name)
 	}
 	path := er.Response.BodyFile
@@ -383,10 +383,11 @@ func EffectiveToDeviceJSON(rules []EffectiveRule) ([]byte, error) {
 		}
 		m := ruleToDeviceMap(er.Rule)
 		// ruleToDeviceMap used the inline Body field; if ResolveBody read a
-		// file, swap in the resolved value.
+		// file, swap in the resolved value. A non-nil but-empty body still
+		// emits `"body": ""` — that's an explicit empty-body override.
 		delete(m, "body")
 		delete(m, "bodyObject")
-		if body != nil && !body.IsEmpty() {
+		if body != nil {
 			if body.Object != nil {
 				m["bodyObject"] = body.Object
 			} else {
@@ -426,9 +427,13 @@ func (rf *RulesFile) ToDeviceJSON() ([]byte, error) {
 
 // ruleToDeviceMap converts a single rule to the device JSON shape. The
 // yml's nested `match` + `response` groups are flattened back to the flat
-// wire format the runtime expects ({name, enabled, host, path, status, body}).
-// Kotlin's parseList stays unchanged; the nesting is purely an authoring
-// convenience for hand-edited yml.
+// wire format the runtime expects ({name, enabled, host, path, status,
+// headers, body}). Kotlin's parseList stays unchanged; the nesting is purely
+// an authoring convenience for hand-edited yml.
+//
+// Body is emitted whenever the pointer is non-nil — that includes the
+// "explicit empty" case (`&BodyValue{}` → `"body": ""`), which the runtime
+// interprets as "replace the response body with an empty one".
 func ruleToDeviceMap(r Rule) map[string]any {
 	m := map[string]any{
 		"name":    r.Name,
@@ -443,7 +448,10 @@ func ruleToDeviceMap(r Rule) map[string]any {
 	if r.Response.Status != 0 {
 		m["status"] = r.Response.Status
 	}
-	if !r.Response.Body.IsEmpty() {
+	if len(r.Response.Headers) > 0 {
+		m["headers"] = r.Response.Headers
+	}
+	if r.Response.Body != nil {
 		if r.Response.Body.Object != nil {
 			m["bodyObject"] = r.Response.Body.Object
 		} else {

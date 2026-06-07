@@ -50,6 +50,26 @@ func TestBodyValueMarshalRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("empty string survives round-trip as explicit empty", func(t *testing.T) {
+		// Empty body is meaningful — it's "force the response body to be
+		// empty", which is distinct from "no body override" (= nil pointer).
+		// The Rule struct uses *BodyValue precisely so callers can encode
+		// the no-override case as nil; the BodyValue itself just needs to
+		// preserve the empty string verbatim.
+		in := BodyValue{String: ""}
+		out, err := yaml.Marshal(&in)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var back BodyValue
+		if err := yaml.Unmarshal(out, &back); err != nil {
+			t.Fatalf("unmarshal back: %v", err)
+		}
+		if back.String != "" {
+			t.Errorf("empty string body should round-trip as empty, got %q", back.String)
+		}
+	})
+
 	t.Run("Object marshals to JSON string scalar", func(t *testing.T) {
 		// Object is set internally by the CLI auto-detect or bodyFile.json
 		// readers. It is NOT a user-facing yml shape — round-trip is

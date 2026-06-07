@@ -369,6 +369,116 @@ func TestUpdateSwapsBodyFileToBody(t *testing.T) {
 	}
 }
 
+// TestAddPersistsHeaders: --header values reach disk so subsequent loads
+// observe the same map, and the device JSON view emits a headers key.
+func TestAddPersistsHeaders(t *testing.T) {
+	p := pathsIn(t)
+	err := Add(p, ScopeLocal, AddOptions{
+		Name:   "html",
+		Host:   "example.com",
+		Status: 200,
+		Body:   &config.BodyValue{String: "<h1>hi</h1>"},
+		Headers: map[string]string{
+			"Content-Type": "text/html; charset=utf-8",
+			"X-Forja":      "1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	rf, _ := config.Load(p.Local)
+	r := rf.FindRule("html")
+	if r == nil {
+		t.Fatal("rule not persisted")
+	}
+	if r.Response.Headers["Content-Type"] != "text/html; charset=utf-8" {
+		t.Errorf("Content-Type not persisted: %+v", r.Response.Headers)
+	}
+	if r.Response.Headers["X-Forja"] != "1" {
+		t.Errorf("X-Forja not persisted: %+v", r.Response.Headers)
+	}
+}
+
+// TestUpdateReplacesHeaders: passing a non-nil headers patch replaces the
+// whole map (no per-key merging — this matches the patch semantics of
+// status/body/etc.).
+func TestUpdateReplacesHeaders(t *testing.T) {
+	p := pathsIn(t)
+	_ = Add(p, ScopeLocal, AddOptions{
+		Name: "x",
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+			"X-Old":        "remove-me",
+		},
+	})
+	replacement := map[string]string{"Content-Type": "text/html"}
+	if err := Update(p, "x", nil, UpdateOptions{Headers: &replacement}); err != nil {
+		t.Fatalf("Update headers: %v", err)
+	}
+	rf, _ := config.Load(p.Local)
+	r := rf.FindRule("x")
+	if r.Response.Headers["Content-Type"] != "text/html" {
+		t.Errorf("Content-Type not updated: %+v", r.Response.Headers)
+	}
+	if _, has := r.Response.Headers["X-Old"]; has {
+		t.Errorf("X-Old should have been dropped by replacement: %+v", r.Response.Headers)
+	}
+}
+
+// TestUpdateClearsHeadersWithEmptyMap: passing &(empty map) clears all
+// headers, while passing nil leaves them untouched.
+func TestUpdateClearsHeadersWithEmptyMap(t *testing.T) {
+	p := pathsIn(t)
+	_ = Add(p, ScopeLocal, AddOptions{
+		Name:    "x",
+		Headers: map[string]string{"X-Keep": "1"},
+	})
+
+	// nil → leave as-is
+	if err := Update(p, "x", nil, UpdateOptions{}); err != nil {
+		t.Fatalf("Update no-op: %v", err)
+	}
+	rf, _ := config.Load(p.Local)
+	r := rf.FindRule("x")
+	if r.Response.Headers["X-Keep"] != "1" {
+		t.Errorf("nil Headers patch should leave map untouched: %+v", r.Response.Headers)
+	}
+
+	// &empty → clear
+	empty := map[string]string{}
+	if err := Update(p, "x", nil, UpdateOptions{Headers: &empty}); err != nil {
+		t.Fatalf("Update clear: %v", err)
+	}
+	rf, _ = config.Load(p.Local)
+	r = rf.FindRule("x")
+	if len(r.Response.Headers) != 0 {
+		t.Errorf("Headers should be cleared, got %+v", r.Response.Headers)
+	}
+}
+
+// TestAddExplicitEmptyBody: an explicit empty body must survive yaml
+// round-trip — the disk shape is `body: ""` (non-nil, empty string) which
+// the device receives as a force-empty-body override.
+func TestAddExplicitEmptyBody(t *testing.T) {
+	p := pathsIn(t)
+	err := Add(p, ScopeLocal, AddOptions{
+		Name:   "empty",
+		Status: 204,
+		Body:   &config.BodyValue{String: ""},
+	})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	rf, _ := config.Load(p.Local)
+	r := rf.FindRule("empty")
+	if r.Response.Body == nil {
+		t.Fatalf("explicit empty body should round-trip as non-nil; got nil")
+	}
+	if r.Response.Body.String != "" {
+		t.Errorf("body should be empty string, got %q", r.Response.Body.String)
+	}
+}
+
 func TestLoadStatusReturnsCurrentState(t *testing.T) {
 	p := pathsIn(t)
 	_ = Add(p, ScopeLocal, AddOptions{Name: "shared"})

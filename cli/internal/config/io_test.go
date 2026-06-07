@@ -517,6 +517,82 @@ func TestEffectiveToDeviceJSONResolvesBodyFile(t *testing.T) {
 	}
 }
 
+// TestToDeviceJSONEmitsExplicitEmptyBody: an explicit empty body
+// (Body = &BodyValue{}) must reach the device as `"body": ""` — distinct
+// from "no body override" (Body == nil), which omits the key entirely.
+func TestToDeviceJSONEmitsExplicitEmptyBody(t *testing.T) {
+	rf := &RulesFile{Rules: []Rule{
+		{Name: "empty-body", Enabled: true,
+			Match:    Match{Host: "example.com"},
+			Response: Response{Status: 204, Body: &BodyValue{String: ""}}},
+		{Name: "no-override", Enabled: true,
+			Match:    Match{Host: "example.com"},
+			Response: Response{Status: 204}},
+	}}
+	js, err := rf.ToDeviceJSON()
+	if err != nil {
+		t.Fatalf("ToDeviceJSON: %v", err)
+	}
+	var got []map[string]any
+	if err := json.Unmarshal(js, &got); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, js)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 rules, got %d", len(got))
+	}
+	// Explicit empty body → "body": "" key MUST be present.
+	v, has := got[0]["body"]
+	if !has {
+		t.Errorf("explicit empty body should emit a body key: %v", got[0])
+	}
+	if s, ok := v.(string); !ok || s != "" {
+		t.Errorf("explicit empty body should emit empty string, got %v (%T)", v, v)
+	}
+	// No-override → body key MUST be absent.
+	if _, has := got[1]["body"]; has {
+		t.Errorf("nil Body should not emit a body key: %v", got[1])
+	}
+}
+
+// TestToDeviceJSONEmitsHeaders: a non-empty headers map must flow through
+// to the device wire format as a `headers` JSON object the runtime can read.
+func TestToDeviceJSONEmitsHeaders(t *testing.T) {
+	rf := &RulesFile{Rules: []Rule{
+		{Name: "html", Enabled: true,
+			Response: Response{
+				Status: 200,
+				Body:   &BodyValue{String: "<h1>hi</h1>"},
+				Headers: map[string]string{
+					"Content-Type": "text/html; charset=utf-8",
+					"X-Forja":      "1",
+				},
+			}},
+		{Name: "no-headers", Enabled: true,
+			Response: Response{Status: 418}},
+	}}
+	js, err := rf.ToDeviceJSON()
+	if err != nil {
+		t.Fatalf("ToDeviceJSON: %v", err)
+	}
+	var got []map[string]any
+	if err := json.Unmarshal(js, &got); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, js)
+	}
+	h, ok := got[0]["headers"].(map[string]any)
+	if !ok {
+		t.Fatalf("rule[0] headers missing or wrong type: %v", got[0])
+	}
+	if h["Content-Type"] != "text/html; charset=utf-8" {
+		t.Errorf("Content-Type not preserved: %v", h)
+	}
+	if h["X-Forja"] != "1" {
+		t.Errorf("X-Forja not preserved: %v", h)
+	}
+	if _, has := got[1]["headers"]; has {
+		t.Errorf("rule without headers should not emit a headers key: %v", got[1])
+	}
+}
+
 func TestToDeviceJSONEmpty(t *testing.T) {
 	rf := &RulesFile{Rules: []Rule{{Name: "off", Enabled: false}}}
 	js, err := rf.ToDeviceJSON()

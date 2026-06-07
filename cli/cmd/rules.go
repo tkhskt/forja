@@ -24,6 +24,7 @@ type rulesFlags struct {
 	status   int
 	body     string
 	bodyFile string
+	headers  []string
 	project  bool // --project = target project scope (forja/rules.yml). default = local.
 }
 
@@ -32,12 +33,17 @@ func bindRulesFlags(cmd *cobra.Command, f *rulesFlags) {
 	cmd.Flags().StringVar(&f.path, "path", "", "match: URL encoded path (substring)")
 	cmd.Flags().IntVar(&f.status, "status", 0, "rewrite: HTTP status code")
 	cmd.Flags().StringVar(&f.body, "body", "",
-		"rewrite: inline response body. If parseable as JSON object, sent as bodyObject; otherwise as raw string.")
+		"rewrite: inline response body. If parseable as JSON object, sent as bodyObject; "+
+			"otherwise as raw string. Pass an empty string ('') to force the response body to be empty.")
 	cmd.Flags().StringVar(&f.bodyFile, "body-file", "",
 		"rewrite: path to a file whose content becomes the response body. Path is "+
 			"interpreted relative to the yml file's directory. *.json files are "+
 			"parsed as JSON objects (bodyObject on device), other extensions are sent "+
 			"as raw strings. Mutually exclusive with --body.")
+	cmd.Flags().StringArrayVar(&f.headers, "header", nil,
+		"rewrite: response header override as KEY=VALUE. Repeatable. The Content-Type entry "+
+			"also drives the body's MIME type on the device (default application/json). "+
+			"On update, passing --header replaces the entire header map; pass --header '' to clear.")
 	cmd.Flags().BoolVar(&f.project, "project", false,
 		"target the project (shared) rules file (forja/rules.yml). Default is local scope (forja/rules.local.yml).")
 }
@@ -117,7 +123,15 @@ The newly added rule is NOT applied to any app. To turn it on, run
 			if cmd.Flags().Changed("body") && cmd.Flags().Changed("body-file") {
 				return errors.New("--body and --body-file are mutually exclusive")
 			}
-			body, err := parseBody(f.body)
+			var body *config.BodyValue
+			if cmd.Flags().Changed("body") {
+				b, err := parseBody(f.body)
+				if err != nil {
+					return err
+				}
+				body = b
+			}
+			headers, err := parseHeaders(f.headers)
 			if err != nil {
 				return err
 			}
@@ -128,6 +142,7 @@ The newly added rule is NOT applied to any app. To turn it on, run
 				Status:   f.status,
 				Body:     body,
 				BodyFile: f.bodyFile,
+				Headers:  headers,
 			}
 			scope := scopeFrom(&f)
 			paths := rulesPaths()
@@ -188,6 +203,13 @@ Use --project to force the project file even when a local-scope shadow exists.
 			if cmd.Flags().Changed("body-file") {
 				bf := f.bodyFile
 				opts.BodyFile = &bf
+			}
+			if cmd.Flags().Changed("header") {
+				headers, err := parseHeaders(f.headers)
+				if err != nil {
+					return err
+				}
+				opts.Headers = &headers
 			}
 			paths := rulesPaths()
 			var scopePtr *rules.Scope
@@ -438,10 +460,13 @@ func runAppPicker() (string, error) {
 
 // parseBody turns a CLI --body string into a BodyValue. JSON-object-looking
 // strings (starting with `{`) become structured (= bodyObject on device);
-// everything else is a plain string body.
+// everything else is a plain string body. The caller is expected to have
+// gated on cmd.Flags().Changed("body") — an empty string here is treated
+// as the explicit "force empty body" case (returns &BodyValue{String: ""}),
+// distinct from "body not provided" (nil).
 func parseBody(s string) (*config.BodyValue, error) {
 	if s == "" {
-		return nil, nil
+		return &config.BodyValue{String: ""}, nil
 	}
 	trimmed := strings.TrimSpace(s)
 	if strings.HasPrefix(trimmed, "{") {
@@ -452,4 +477,52 @@ func parseBody(s string) (*config.BodyValue, error) {
 		return &config.BodyValue{Object: m}, nil
 	}
 	return &config.BodyValue{String: s}, nil
+}
+
+// parseHeaders parses a slice of `KEY=VALUE` flag values into a header map.
+// A single empty entry (`--header ''`) is the documented way to express
+// "clear all headers" on update; it returns an empty (non-nil) map.
+//
+// Validation:
+//   - KEY must be non-empty and not contain whitespace, ':' or newline
+//   - VALUE may be any string (including empty)
+//   - duplicate KEY entries: last write wins (mirroring map semantics)
+func parseHeaders(entries []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, e := range entries {
+		if e == "" {
+			// Single empty entry → "clear" sentinel. If mixed with non-empty
+			// entries, that's almost certainly user confusion — reject.
+			if len(entries) > 1 {
+				return nil, errors.New("--header '': cannot be combined with other --header entries (use it alone to clear)")
+			}
+			return out, nil
+		}
+		idx := strings.Index(e, "=")
+		if idx <= 0 {
+			return nil, fmt.Errorf("--header %q: expected KEY=VALUE with non-empty KEY", e)
+		}
+		k := e[:idx]
+		v := e[idx+1:]
+		if err := validateHeaderName(k); err != nil {
+			return nil, fmt.Errorf("--header %q: %w", e, err)
+		}
+		out[k] = v
+	}
+	return out, nil
+}
+
+// validateHeaderName rejects header names that would break the wire format
+// or the on-device JSON parser. HTTP RFCs allow a wider character set in
+// header names but forja only needs the common ASCII subset.
+func validateHeaderName(k string) error {
+	if k == "" {
+		return errors.New("header KEY cannot be empty")
+	}
+	for _, r := range k {
+		if r <= 0x20 || r == 0x7F || r == ':' {
+			return fmt.Errorf("header KEY contains invalid character %q (U+%04X)", r, r)
+		}
+	}
+	return nil
 }

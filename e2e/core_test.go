@@ -160,6 +160,99 @@ func TestCoreOff(t *testing.T) {
 	maestroFlow(t, "tap_singleton_assert_200.yaml")
 }
 
+// TestCoreHeadersRewrite — --header KEY=VALUE entries reach the wire and the
+// runtime applies them via OkHttp's Response.Builder.header(...). Covers the
+// two distinct effects of a Content-Type override:
+//
+//  1. headers map gets emitted to the device JSON
+//  2. the runtime uses Content-Type to wrap the body in the right MIME type
+//
+// We use a deliberately unique custom Content-Type value so the assertion
+// can't accidentally match the upstream example.com response.
+func TestCoreHeadersRewrite(t *testing.T) {
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
+	clearLogcat(t)
+
+	runForja(t, "rules", "add", "headers-rewrite",
+		"--host", "example.com", "--path", "/",
+		"--status", "200",
+		"--body", "marker-body-text",
+		"--header", "Content-Type=application/x-forja-test",
+		"--header", "X-Forja-Test=v1",
+	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "headers-rewrite")
+	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
+	waitForLogcat(t, "self-destruct mode enabled", 5*time.Second, "ForjaAgent")
+
+	// The sample app dumps headers (k: v lines) and body separately. Asserting
+	// on both Content-Type and an arbitrary X-* header proves the wire format
+	// carries the full map (not just Content-Type as a special case).
+	runInlineMaestro(t, `
+appId: com.tkhskt.forja.sample
+---
+- tapOn:
+    id: "fetch_singleton"
+- extendedWaitUntil:
+    visible:
+      text: ".*HTTP 200.*"
+    timeout: 15000
+- assertVisible:
+    text: ".*application/x-forja-test.*"
+- assertVisible:
+    text: ".*X-Forja-Test.*v1.*"
+- assertVisible:
+    text: ".*marker-body-text.*"
+`)
+}
+
+// TestCoreExplicitEmptyBody — --body '' forces the response body to be empty,
+// distinct from omitting --body (which would leave the original example.com
+// HTML body intact). We can't easily assertNotVisible "the absence of HTML",
+// so we rely on the sample app's logcat line that prints byte count:
+//
+//	[singleton] HTTP 204 (0 bytes)
+//
+// Seeing `(0 bytes)` while the upstream normally returns ~1.2KB of HTML is
+// unambiguous evidence the runtime replaced the body with an empty one.
+func TestCoreExplicitEmptyBody(t *testing.T) {
+	resetForjaState(t, AppDev)
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
+	clearLogcat(t)
+
+	runForja(t, "rules", "add", "empty-body",
+		"--host", "example.com", "--path", "/",
+		"--status", "204",
+		"--body", "",
+	)
+	runForja(t, "apply", "--app", AppDev, "--enable", "empty-body")
+	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
+	waitForLogcat(t, "self-destruct mode enabled", 5*time.Second, "ForjaAgent")
+
+	// Trigger the request, wait for the UI to update so the logcat write is
+	// flushed, then check both signals.
+	runInlineMaestro(t, `
+appId: com.tkhskt.forja.sample
+---
+- tapOn:
+    id: "fetch_singleton"
+- extendedWaitUntil:
+    visible:
+      text: ".*HTTP 204.*"
+    timeout: 15000
+`)
+	waitForLogcat(t, "(0 bytes)", 10*time.Second, "SampleApp")
+	// The yml on disk must hold body as an explicit empty string, not omitted
+	// — otherwise the next `forja sync` would push a no-body-override rule
+	// and silently let the upstream body flow through.
+	yml := readRulesYml(t, "rules.local.yml")
+	if !strings.Contains(yml, `body: ""`) {
+		t.Errorf("rules.local.yml should store body as an explicit empty string;\n--- got ---\n%s", yml)
+	}
+}
+
 // TestCoreBodyFile — bodyFile is read at push time and the response body is
 // the file's content.
 func TestCoreBodyFile(t *testing.T) {

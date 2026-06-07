@@ -96,17 +96,47 @@ CLI flags stay flat; forja distributes them into the yml's `match:` / `response:
 --path       match: substring of encoded path (→ match.path)
 --status     response: HTTP status code       (→ response.status)
 --body       response: inline body            (→ response.body — JSON-object-looking
-             strings become bodyObject on the wire, everything else is sent raw)
+             strings become bodyObject on the wire, everything else is sent raw.
+             Pass --body '' to force the response body to be empty)
 --body-file  response: external file path     (→ response.bodyFile)
              path is relative to the yml's directory, or absolute
              .json extension → sent as bodyObject; anything else → raw string
+--header     response: KEY=VALUE header override, repeatable (→ response.headers.KEY)
+             Content-Type also drives the body's MIME type on the device
+             (default application/json; charset=utf-8). On `update`, passing
+             --header replaces the entire header map; pass --header '' to clear
 --project    target the project scope (default is local)
 --no-sync    (update / remove only) suppress the auto-push
 ```
 
 `--body` and `--body-file` are **mutually exclusive** (passing both is an error). When `update` sets one of them, the other is automatically cleared.
 
-`update` has patch semantics: **only the fields you pass on the command line change**. Pass `--status` alone and the host / path / body are preserved.
+`update` has patch semantics: **only the fields you pass on the command line change**. Pass `--status` alone and the host / path / body / headers are preserved.
+
+### Returning non-JSON content types
+
+The on-device runtime defaults to `application/json; charset=utf-8` when no `Content-Type` header is set. Override it via `--header`:
+
+```bash
+forja rules add html-mock \
+    --host example.com --path / --status 200 \
+    --body '<h1>hi from forja</h1>' \
+    --header 'Content-Type=text/html; charset=utf-8'
+```
+
+The same shape works for any MIME type — `text/plain`, `application/xml`, `image/svg+xml`, etc.
+
+### Forcing an empty response body
+
+`--body ''` is distinct from "no body override": it explicitly replaces the response body with an empty one. Handy for `204 No Content`-style mocks where the upstream would normally return a payload:
+
+```bash
+forja rules add empty-204 \
+    --host example.com --path /resource \
+    --status 204 --body ''
+```
+
+Omitting `--body` entirely leaves the original response body untouched.
 
 ---
 
@@ -151,17 +181,37 @@ rules:
     response:
       status: 200
       bodyFile: responses/heavy.json   # external file (relative to the yml's directory, or absolute)
+  - name: html-mock
+    match:
+      host: example.com
+      path: /
+    response:
+      status: 200
+      body: "<h1>hi from forja</h1>"
+      headers:
+        Content-Type: "text/html; charset=utf-8"
+  - name: empty-204
+    match:
+      host: example.com
+      path: /resource
+    response:
+      status: 204
+      body: ""                         # explicit empty body (distinct from omitting it)
 ```
 
 Both `match:` and `response:` are optional. A rule with only `response:` matches every request; a rule with only `match:` is a no-op (and gets flagged by `rules add` if it would have nothing to do).
 
 `response.body` is **always a string scalar in the yml**. To send a JSON object, write it as a JSON-encoded string (as in `mock-failure` above) or use `bodyFile:` for larger payloads. The earlier `body:\n  key: value` mapping form is not supported — the yml will fail to load with a hint pointing at the supported forms.
 
+`response.body: ""` is **the explicit empty-body case** — the device replaces the matched response with an empty one. Omitting the `body:` key entirely is different: the original response body passes through unchanged. The same distinction holds on the CLI (`--body ''` vs not passing `--body`).
+
 `response.bodyFile` is mutually exclusive with `response.body`. At push time the file is read and:
 - `.json` extension → parsed as a JSON object → sent as `bodyObject`
 - anything else → raw bytes → sent as a raw string
 
 So `big-response` above reads `forja/responses/heavy.json`. Handy when you don't want a large JSON blob or HTML template inlined in the yml.
+
+`response.headers` is an **optional map of header overrides** applied on top of the matched response. The `Content-Type` entry also drives the response body's MIME type on the device — by default the runtime returns `application/json; charset=utf-8`, so set `Content-Type` explicitly when returning HTML / plain text / XML / SVG / etc.
 
 ### Fields
 
@@ -177,8 +227,9 @@ So `big-response` above reads `forja/responses/heavy.json`. Handy when you don't
 | Field | Purpose |
 |---|---|
 | `status` | Replacement HTTP status |
-| `body` | Inline body as a string scalar (write JSON objects as JSON-encoded strings: `'{"k":"v"}'`) |
+| `body` | Inline body as a string scalar (write JSON objects as JSON-encoded strings: `'{"k":"v"}'`). `""` forces an empty body — distinct from omitting the key, which leaves the original body untouched |
 | `bodyFile` | Read body content from an external file (mutually exclusive with `body`) |
+| `headers` | Map of response header overrides. `Content-Type` here also sets the body's MIME type (default `application/json; charset=utf-8`) |
 
 Top-level:
 

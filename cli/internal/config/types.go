@@ -55,10 +55,19 @@ type Match struct {
 // read and:
 //   - `.json` extension → parsed as JSON object → emitted as `bodyObject`
 //   - anything else      → raw bytes → emitted as `body` (string)
+//
+// `Body == nil` means "no body override — original response body passes
+// through". An explicit empty body (e.g. `body: ""` in yml, or `--body ""`
+// on the CLI) is represented by a non-nil pointer with String == "" and is
+// distinct from nil — it forces the on-device response to have an empty body.
+//
+// `Headers` is an optional override map applied on top of the original
+// response headers (with Content-Type also driving the response body's MIME).
 type Response struct {
-	Status   int        `yaml:"status,omitempty"`
-	Body     *BodyValue `yaml:"body,omitempty"`
-	BodyFile string     `yaml:"bodyFile,omitempty"`
+	Status   int               `yaml:"status,omitempty"`
+	Body     *BodyValue        `yaml:"body,omitempty"`
+	BodyFile string            `yaml:"bodyFile,omitempty"`
+	Headers  map[string]string `yaml:"headers,omitempty"`
 }
 
 // IsZero reports whether m has no fields set. Used by yaml MarshalYAML to
@@ -70,7 +79,7 @@ func (m Match) IsZero() bool {
 // IsZero reports whether r has no fields set. Used by yaml MarshalYAML to
 // omit empty Response blocks from the output.
 func (r Response) IsZero() bool {
-	return r.Status == 0 && r.Body.IsEmpty() && r.BodyFile == ""
+	return r.Status == 0 && r.Body == nil && r.BodyFile == "" && len(r.Headers) == 0
 }
 
 // BodyValue holds the response body for a rule. In the yml the body is
@@ -79,14 +88,14 @@ func (r Response) IsZero() bool {
 // bodyFile — so that the device JSON can emit `bodyObject` for structured
 // content. Object never round-trips through the yml: MarshalYAML serializes
 // it back to a JSON-encoded scalar string.
+//
+// An empty BodyValue (String == "" && Object == nil) is a valid value that
+// means "force the on-device response body to be empty". The distinction
+// between "no override" and "force empty" is encoded at the *pointer* level
+// — Response.Body == nil for no override.
 type BodyValue struct {
 	String string
 	Object map[string]any
-}
-
-// IsEmpty reports whether the body has neither a string nor an object value.
-func (b *BodyValue) IsEmpty() bool {
-	return b == nil || (b.String == "" && b.Object == nil)
 }
 
 // UnmarshalYAML accepts only scalar bodies. The mapping form

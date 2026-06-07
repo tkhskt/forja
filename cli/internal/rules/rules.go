@@ -104,7 +104,13 @@ func (p Paths) pathFor(s Scope) string {
 // from the saved yaml; Status==0 is treated as unset.
 //
 // Body and BodyFile are mutually exclusive — passing both is rejected by
-// Add. The CLI layer enforces this at flag parsing too.
+// Add. The CLI layer enforces this at flag parsing too. Body == nil means
+// "no body override"; an explicit empty body is &config.BodyValue{}.
+//
+// Headers, when non-empty, overrides headers on the matched response. The
+// Content-Type entry also drives the response body's MIME type on the
+// device side — so e.g. `Content-Type=text/html` + a string body lets the
+// rule return HTML instead of the default JSON.
 type AddOptions struct {
 	Name     string
 	Host     string
@@ -112,6 +118,7 @@ type AddOptions struct {
 	Status   int
 	Body     *config.BodyValue
 	BodyFile string
+	Headers  map[string]string
 }
 
 // ValidateRuleName rejects names that would clash with forja's CLI surface
@@ -148,7 +155,7 @@ func Add(paths Paths, scope Scope, opts AddOptions) error {
 	if err := ValidateRuleName(opts.Name); err != nil {
 		return err
 	}
-	if opts.Body != nil && !opts.Body.IsEmpty() && opts.BodyFile != "" {
+	if opts.Body != nil && opts.BodyFile != "" {
 		return errors.New("body and bodyFile are mutually exclusive")
 	}
 	path := paths.pathFor(scope)
@@ -176,6 +183,7 @@ func Add(paths Paths, scope Scope, opts AddOptions) error {
 			Status:   opts.Status,
 			Body:     opts.Body,
 			BodyFile: opts.BodyFile,
+			Headers:  opts.Headers,
 		},
 	}
 	if err := rf.AddRule(r); err != nil {
@@ -239,12 +247,18 @@ func Remove(paths Paths, name string, scope *Scope) error {
 // Body and BodyFile are mutually exclusive at the patch level too — setting
 // one explicitly clears the other (= switching from inline body to file
 // reference, or vice versa, requires only passing the new value).
+//
+// Headers uses a pointer-to-map so the patch can distinguish three intents:
+//   - nil           → leave headers as-is on the existing rule
+//   - &(empty map)  → clear all headers
+//   - &(non-empty)  → replace the entire headers map (no per-key merging)
 type UpdateOptions struct {
 	Host     *string
 	Path     *string
 	Status   *int
 	Body     *config.BodyValue
 	BodyFile *string
+	Headers  *map[string]string
 }
 
 // Update patches an existing rule. If scope is nil, the rule is searched
@@ -296,6 +310,13 @@ func Update(paths Paths, name string, scope *Scope, opts UpdateOptions) error {
 	if opts.BodyFile != nil {
 		r.Response.BodyFile = *opts.BodyFile
 		r.Response.Body = nil // clear the inline body
+	}
+	if opts.Headers != nil {
+		if len(*opts.Headers) == 0 {
+			r.Response.Headers = nil
+		} else {
+			r.Response.Headers = *opts.Headers
+		}
 	}
 	return config.Save(path, rf)
 }
