@@ -90,8 +90,8 @@ Pushing a tag fires `.github/workflows/release.yml`:
 
 1. **Create and push a tag**:
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v0.2.0
+   git push origin v0.2.0
    ```
 2. The agent is built on ubuntu-latest (Android SDK + NDK setup → `./gradlew :jvmti-agent:bundleAgentDex`).
 3. The forja binary is Go-cross-compiled for six targets (macOS arm64/amd64, Linux arm64/amd64, Windows arm64/amd64).
@@ -100,12 +100,12 @@ Pushing a tag fires `.github/workflows/release.yml`:
 
 ### Trying the workflow before tagging
 
-`workflow_dispatch` lets you trigger the workflow manually (Actions tab → release → Run workflow). Passing `v0.1.0-test` (or similar) as `version` runs everything **without** creating a GitHub Release, leaving the artifacts attached to the run instead (= dry-run mode).
+`workflow_dispatch` lets you trigger the workflow manually (Actions tab → release → Run workflow). Passing `v0.2.0-test` (or similar) as `version` runs everything **without** creating a GitHub Release, leaving the artifacts attached to the run instead (= dry-run mode).
 
 To verify pieces locally, [act](https://github.com/nektos/act) can help:
 
 ```bash
-act workflow_dispatch -W .github/workflows/release.yml --input version=v0.1.0-test
+act workflow_dispatch -W .github/workflows/release.yml --input version=v0.2.0-test
 ```
 
 The Android NDK install step is heavy inside a container, though, so triggering `workflow_dispatch` on GitHub is usually faster in practice.

@@ -55,7 +55,7 @@ Patch semantics — only the fields you pass change. Auto-pushes to every app wh
 ### 3. Hand-edit the yml, then sync
 
 ```bash
-$EDITOR forja/rules.local.yml
+$EDITOR forja/rules.yml
 forja sync                 # re-push to every app with a status entry
 forja sync --app dev       # or just one app (alias or full name)
 ```

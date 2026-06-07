@@ -31,7 +31,7 @@ PREFIX=/usr/local curl -fsSL https://raw.githubusercontent.com/tkhskt/forja/main
 Pin a specific version:
 
 ```bash
-FORJA_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/tkhskt/forja/main/install.sh | bash
+FORJA_VERSION=v0.2.0 curl -fsSL https://raw.githubusercontent.com/tkhskt/forja/main/install.sh | bash
 ```
 
 If `~/.local/bin` isn't on your `PATH` yet, add it:
@@ -122,7 +122,7 @@ install.sh always re-resolves the latest tag via the GitHub API and overwrites t
 To pin a specific version (e.g. for downgrading or reproducing a bug report):
 
 ```bash
-FORJA_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/tkhskt/forja/main/install.sh | bash
+FORJA_VERSION=v0.2.0 curl -fsSL https://raw.githubusercontent.com/tkhskt/forja/main/install.sh | bash
 ```
 
 Confirm the running version:

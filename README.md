@@ -47,7 +47,7 @@ Rule definitions and per-app on/off state live in a `forja/` directory at the ro
 
 ```bash
 # 0. One-time setup: create forja/ + forja/rules.yml with a schema-commented
-#    template. Add --gitignore to also append the recommended ignore entries.
+#    template (also prints the recommended .gitignore entries to add by hand).
 forja init
 
 # 1. Add a rule to the catalog (yml only — nothing reaches the device yet)
