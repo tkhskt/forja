@@ -163,15 +163,31 @@ const MainActivityFQN = "com.tkhskt.forja.sample.MainActivity"
 func startMainActivity(t *testing.T, pkg string) {
 	t.Helper()
 	_, _ = adbShellAllowingFailure(t, fmt.Sprintf("am start -n %s/%s", pkg, MainActivityFQN))
-	// Wait up to 5s for pidof to come back non-zero.
-	deadline := time.Now().Add(5 * time.Second)
+	// Wait for a *stable* PID. A bare "pidof > 0" was the original gate, but
+	// occasionally Android reports a PID for a process that's still in the
+	// middle of its launch sequence and gets killed milliseconds later by
+	// am / activity manager (e.g. when force-stop's cleanup hadn't fully
+	// settled). Requiring the same non-zero PID for ~500ms eliminates the
+	// race where a subsequent `forja apply` would fire its own pidof and
+	// see 0, surfacing as a confusing "app not running" error in the test.
+	const stableWindow = 500 * time.Millisecond
+	deadline := time.Now().Add(10 * time.Second)
+	var lastPid int
+	var stableSince time.Time
 	for time.Now().Before(deadline) {
-		if pidof(t, pkg) > 0 {
+		p := pidof(t, pkg)
+		switch {
+		case p == 0:
+			lastPid = 0
+		case p != lastPid:
+			lastPid = p
+			stableSince = time.Now()
+		case time.Since(stableSince) >= stableWindow:
 			return
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("app %s failed to start within 5s", pkg)
+	t.Fatalf("app %s failed to reach a stable PID within 10s (last pid=%d)", pkg, lastPid)
 }
 
 // readDeviceFile reads /data/data/<pkg>/<remoteRel> via run-as. Returns
