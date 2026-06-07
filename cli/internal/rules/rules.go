@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/tkhskt/forja/internal/config"
 )
@@ -113,13 +114,39 @@ type AddOptions struct {
 	BodyFile string
 }
 
+// ValidateRuleName rejects names that would clash with forja's CLI surface
+// or otherwise behave surprisingly downstream. The accepted set is wide on
+// purpose — UTF-8 letters, digits, whitespace, dashes, dots, etc. all work.
+// The bans cover:
+//
+//   - empty / whitespace-only names (no identifier to reference later)
+//   - comma — `forja apply --enable a,b` splits on comma, so a name containing
+//     one cannot be enabled/disabled via the flag
+//   - control characters (\n, \r, \t, NUL …) — would break yaml round-trip,
+//     logcat output, or TUI rendering
+func ValidateRuleName(name string) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return errors.New("rule name required (cannot be empty or only whitespace)")
+	}
+	if strings.ContainsRune(name, ',') {
+		return errors.New("rule name cannot contain ',' (the comma is used as a separator by --enable/--disable)")
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7F {
+			return fmt.Errorf("rule name cannot contain control characters (found U+%04X)", r)
+		}
+	}
+	return nil
+}
+
 // Add appends a rule to the file at the given scope. If the file is missing
 // it's created. The added rule does NOT modify status.json — newly added
 // rules are off for every app by default, and become live only when
 // explicitly enabled via Enable() or the TUI.
 func Add(paths Paths, scope Scope, opts AddOptions) error {
-	if opts.Name == "" {
-		return errors.New("rule name required")
+	if err := ValidateRuleName(opts.Name); err != nil {
+		return err
 	}
 	if opts.Body != nil && !opts.Body.IsEmpty() && opts.BodyFile != "" {
 		return errors.New("body and bodyFile are mutually exclusive")

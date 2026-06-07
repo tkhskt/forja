@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/tkhskt/forja/internal/config"
@@ -423,5 +424,97 @@ func TestErrNoFileSentinel(t *testing.T) {
 	err := Remove(p, "x", &scope)
 	if !errors.Is(err, ErrNoFile) {
 		t.Errorf("want ErrNoFile, got %v", err)
+	}
+}
+
+// ----------------------------------------------------------------------
+// Rule name validation (ValidateRuleName / Add)
+// ----------------------------------------------------------------------
+
+func TestValidateRuleNameAcceptsCommonShapes(t *testing.T) {
+	cases := []string{
+		"simple",
+		"hyphen-name",
+		"snake_case",
+		"dot.style",
+		"with space inside",
+		"トレーリング 日本語",
+		"漢字とひらがなのカタカナ",
+		"絵文字も🚀",
+		"123-starts-with-digit",
+		"single", // anything non-trivial UTF-8 / ASCII without comma / control
+	}
+	for _, name := range cases {
+		if err := ValidateRuleName(name); err != nil {
+			t.Errorf("ValidateRuleName(%q) unexpectedly rejected: %v", name, err)
+		}
+	}
+}
+
+func TestValidateRuleNameRejectsEmptyOrWhitespace(t *testing.T) {
+	for _, bad := range []string{"", "   ", "\t", "\n"} {
+		if err := ValidateRuleName(bad); err == nil {
+			t.Errorf("ValidateRuleName(%q) should be rejected", bad)
+		}
+	}
+}
+
+func TestValidateRuleNameRejectsComma(t *testing.T) {
+	for _, bad := range []string{",foo", "foo,", "foo,bar", "a, b"} {
+		err := ValidateRuleName(bad)
+		if err == nil {
+			t.Errorf("ValidateRuleName(%q) should be rejected (comma collides with --enable splitting)", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), ",") {
+			t.Errorf("error for %q should mention the comma, got %v", bad, err)
+		}
+	}
+}
+
+func TestValidateRuleNameRejectsControlChars(t *testing.T) {
+	for _, bad := range []string{"foo\nbar", "x\ty", "with\x00null", "tail-\r-cr"} {
+		if err := ValidateRuleName(bad); err == nil {
+			t.Errorf("ValidateRuleName(%q) should be rejected (control char)", bad)
+		}
+	}
+}
+
+func TestAddAcceptsMultiByteName(t *testing.T) {
+	p := pathsIn(t)
+	name := "認証 エラー 401"
+	if err := Add(p, ScopeLocal, AddOptions{Name: name, Status: 401}); err != nil {
+		t.Fatalf("Add multi-byte name: %v", err)
+	}
+	rf, err := config.Load(p.Local)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	r := rf.FindRule(name)
+	if r == nil {
+		t.Fatalf("rule %q not found after Add", name)
+	}
+	if r.Response.Status != 401 {
+		t.Errorf("status not stored: %d", r.Response.Status)
+	}
+	// Enable / Disable round-trip preserves the multi-byte name through
+	// status.json without normalization.
+	if err := Enable(p, "com.x", []string{name}); err != nil {
+		t.Fatalf("Enable multi-byte name: %v", err)
+	}
+	st, _ := config.LoadStatus(p.Status)
+	if !st.IsEnabled("com.x", name) {
+		t.Errorf("multi-byte name %q should be in com.x's enabled list, got %+v", name, st)
+	}
+}
+
+func TestAddRejectsCommaName(t *testing.T) {
+	p := pathsIn(t)
+	err := Add(p, ScopeLocal, AddOptions{Name: "a,b"})
+	if err == nil {
+		t.Fatal("Add should reject comma in name")
+	}
+	if !strings.Contains(err.Error(), ",") {
+		t.Errorf("error should mention comma, got %v", err)
 	}
 }
