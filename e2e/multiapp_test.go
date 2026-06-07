@@ -11,24 +11,10 @@
 package e2e_test
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
-
-// runForjaInAppDir runs forja with a separate forja/ subdirectory so the
-// dev and staging tests don't share rule definitions / status. We use the
-// --rules global flag to point at a custom rules.yml path, and the user file
-// is derived from that.
-func runForjaWithCustomDir(t *testing.T, dirName string, args ...string) string {
-	t.Helper()
-	dir := filepath.Join(repoRoot, dirName)
-	custom := []string{"--rules", filepath.Join(dirName, "rules.yml")}
-	custom = append(custom, args...)
-	_ = dir
-	return runForja(t, custom...)
-}
 
 // TestMultiAppListDebuggable: with both flavors running, the
 // internal ListDebuggableApps logic should expose both. We don't have a
@@ -129,24 +115,6 @@ func TestMultiAppOffOnlyAffectsTarget(t *testing.T) {
 	if _, exists := readDeviceFile(t, AppStaging, "files/rules.json"); exists {
 		t.Error("staging's rules.json should not exist (forja never targeted it)")
 	}
-}
-
-// TestMultiAppRulesFileForEachApp: a forja repo with separate
-// rules.yml per app (via --rules override) keeps state cleanly
-// partitioned.
-func TestMultiAppSeparateRulesYmlPaths(t *testing.T) {
-	// Two parallel "projects" under the repo root, each with its own
-	// --rules path. We use this pattern to exercise the --rules global flag.
-	// Note: the user / status files are derived from rulesPaths(), which
-	// only swaps Project — for full isolation a real user would put each
-	// project in a separate cwd, but this test exercises the override path.
-	_ = filepath.Join(repoRoot, "forja-dev")
-	_ = filepath.Join(repoRoot, "forja-staging")
-
-	// Skip if --rules override doesn't fully isolate state — log it as a
-	// known limitation rather than failing.
-	t.Skip("--rules override only swaps Project; full isolation requires separate cwd. " +
-		"Document as a known limit until per-pkg state dirs land.")
 }
 
 // TestMultiAppSharedRuleAppliesToBothFlavors: a single rule definition in yml

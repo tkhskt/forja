@@ -7,20 +7,16 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/tkhskt/forja/internal/config"
 )
 
 // Globals carries flag values that apply to multiple subcommands. Cobra's
 // PersistentFlags would also work but a struct is easier to pass to engine
 // constructors that don't need the cobra Command itself.
 type Globals struct {
-	RulesPath string // path to ./forja/rules.yml (overridable via --rules)
 	BundleDir string // path to JVMTI agent build outputs (overridable via --bundle)
 }
 
-var globals = Globals{
-	RulesPath: config.DefaultPath,
-}
+var globals = Globals{}
 
 // versionString is stamped by the release pipeline via -ldflags; set from
 // main.go through SetVersion. Defaults to "dev" for source builds.
@@ -55,8 +51,6 @@ across app process restarts.`,
 		SilenceErrors: true,
 		Version:       versionString,
 	}
-	root.PersistentFlags().StringVar(&globals.RulesPath, "rules", config.DefaultPath,
-		"path to the project rules file (default: forja/rules.yml)")
 	root.PersistentFlags().StringVar(&globals.BundleDir, "bundle", "",
 		"override agent bundle directory (resolved from FORJA_BUNDLE_DIR, "+
 			"XDG_DATA_HOME/forja/agent, ~/.local/share/forja/agent, "+

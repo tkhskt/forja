@@ -14,13 +14,13 @@ func newOffCmd() *cobra.Command {
 	var app string
 	c := &cobra.Command{
 		Use:   "off --app APP",
-		Short: "Clear rules on an app: push [] to device AND empty its enabled list in status.json",
-		Long: `Clear all rewrites on the given app's
-enabled list in forja/status.json. The yml rule catalog is NOT modified — you
-can re-enable individual rules via 'forja apply --app X --enable ...' or the
-TUI when you want to re-engage on this app.
+		Short: "Turn off every rewrite on an app (other apps untouched)",
+		Long: `Turn off every rewrite on the given app so it sees the original (real)
+responses again. The yml rule catalog is NOT modified — you can re-enable
+individual rules via 'forja apply --app X --enable ...' or the TUI when
+you want to re-engage on this app.
 
-Only the named app is affected; other apps' status entries stay intact.`,
+Only the named app is affected; other apps' state stays intact.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if app == "" {
 				return errors.New("--app is required")

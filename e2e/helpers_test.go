@@ -288,15 +288,15 @@ func resetForjaState(t *testing.T, pkgs ...string) {
 }
 
 // StatusJSON mirrors the on-disk shape of forja/status.json: a flat top-level
-// map of pkg → {"enabled": [...rule names]}. A rule is "on" for a pkg iff its
-// name appears in that pkg's enabled list (= absent means off).
+// map of app → {"enabled": [...rule names]}. A rule is "on" for an app iff
+// its name appears in that app's enabled list (= absent means off).
 type StatusJSON map[string]struct {
 	Enabled []string `json:"enabled"`
 }
 
 // IsEnabled is the test-side mirror of config.Status.IsEnabled.
-func (s StatusJSON) IsEnabled(pkg, name string) bool {
-	ps, ok := s[pkg]
+func (s StatusJSON) IsEnabled(app, name string) bool {
+	ps, ok := s[app]
 	if !ok {
 		return false
 	}
@@ -309,21 +309,36 @@ func (s StatusJSON) IsEnabled(pkg, name string) bool {
 }
 
 // readStatusJSON returns the parsed forja/status.json. Returns nil (empty
-// map) if the file doesn't exist.
+// map) if the file doesn't exist. Top-level keys starting with `$` are
+// silently skipped — forja embeds a "$comment" metadata key warning users
+// that the file is CLI-managed, and that string value can't decode as
+// {Enabled []string}.
 func readStatusJSON(t *testing.T) StatusJSON {
 	t.Helper()
 	path := filepath.Join(repoRoot, "forja", "status.json")
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return StatusJSON{}
 		}
 		t.Fatalf("open %s: %v", path, err)
 	}
-	defer f.Close()
-	out := StatusJSON{}
-	if err := json.NewDecoder(f).Decode(&out); err != nil {
+	raw := map[string]json.RawMessage{}
+	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("decode status.json: %v", err)
+	}
+	out := StatusJSON{}
+	for k, v := range raw {
+		if strings.HasPrefix(k, "$") {
+			continue
+		}
+		var ps struct {
+			Enabled []string `json:"enabled"`
+		}
+		if err := json.Unmarshal(v, &ps); err != nil {
+			t.Fatalf("decode status.json[%s]: %v", k, err)
+		}
+		out[k] = ps
 	}
 	return out
 }

@@ -43,15 +43,11 @@ func bindRulesFlags(cmd *cobra.Command, f *rulesFlags) {
 		"target the project (shared) rules file (forja/rules.yml). Default is local scope (forja/rules.local.yml).")
 }
 
-// rulesPaths resolves the Paths struct from cobra globals. The global --rules
-// flag overrides the project rules path; the user / status / aliases siblings
-// stay at their defaults regardless (= forja/rules.local.yml etc.).
+// rulesPaths resolves the Paths struct from the defaults. Paths are not
+// individually overridable from the CLI — to operate on a different forja/
+// directory, run forja from a different cwd.
 func rulesPaths() rules.Paths {
-	p := rules.DefaultPaths()
-	if globals.RulesPath != "" && globals.RulesPath != config.DefaultPath {
-		p.Project = globals.RulesPath
-	}
-	return p
+	return rules.DefaultPaths()
 }
 
 // scopeFrom turns the --project flag into a rules.Scope (default = local).
