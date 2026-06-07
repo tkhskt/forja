@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # forja installer — one-liner for picking up the latest pre-built release.
 #
+# Same command for fresh install AND update — re-running this overwrites the
+# binary and wipes-then-recopies the agent bundle so stale agent files from a
+# previous version never linger.
+#
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/tkhskt/forja/main/install.sh | bash
 #
@@ -66,7 +70,7 @@ curl -fsSL "$URL" -o "$TMPDIR/forja.tar.gz"
 
 # ---- Extract into PREFIX ----
 echo "==> Installing into $PREFIX"
-mkdir -p "$PREFIX/bin" "$PREFIX/share/forja/agent"
+mkdir -p "$PREFIX/bin"
 tar -xzf "$TMPDIR/forja.tar.gz" -C "$TMPDIR"
 
 # Expected layout inside tarball:
@@ -75,12 +79,18 @@ tar -xzf "$TMPDIR/forja.tar.gz" -C "$TMPDIR"
 #     share/forja/agent/agent-bundle.dex
 #     share/forja/agent/libforja-agent-*.so
 src="$TMPDIR/forja_${VERSION#v}_${OS}_${ARCH}"
+
+# `install` overwrites the binary in place. The agent dir is wiped first so
+# .so files dropped in a future release don't linger from a previous install.
 install -m 0755 "$src/bin/forja" "$PREFIX/bin/forja"
-cp -f "$src/share/forja/agent/"* "$PREFIX/share/forja/agent/"
+rm -rf "$PREFIX/share/forja/agent"
+mkdir -p "$PREFIX/share/forja/agent"
+cp "$src/share/forja/agent/"* "$PREFIX/share/forja/agent/"
 
 # ---- Finish ----
 echo
 echo "Installed forja ${VERSION}"
+echo "(re-run the same command later to update — agent files are refreshed cleanly)"
 echo
 if ! command -v forja >/dev/null 2>&1 || [[ "$(command -v forja)" != "$PREFIX/bin/forja" ]]; then
     echo "Add ${PREFIX}/bin to PATH if it isn't already:"

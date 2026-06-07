@@ -14,13 +14,15 @@ A tool for rewriting OkHttp responses on Android apps **without rebuilding the a
 - The target app is **debuggable** (debug builds are debuggable by default) and runs on API 28+
 - `adb` is on `PATH` and a device or emulator is connected
 
-## Install
+## Install / update
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tkhskt/forja/main/install.sh | bash
 ```
 
 Installs the binary to `$HOME/.local/bin/forja` and the JVMTI agent to `$HOME/.local/share/forja/agent/`. Supports macOS and Linux on arm64 / amd64.
+
+**Re-run the same command later to update** — install.sh always fetches the current latest tag, wipes the agent dir, and recopies, so old `.so` files never linger across versions.
 
 For **Windows**, manual install, or **building from source**, see [`docs/install.md`](docs/install.md).
 

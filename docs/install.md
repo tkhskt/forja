@@ -8,6 +8,8 @@ Three ways to install forja, from easiest to most involved:
 
 After install, every `forja` command resolves the JVMTI agent bundle (the four ABI `.so` files plus `agent-bundle.dex`) via the [bundle search order](#bundle-search-order).
 
+For [updating](#updating), see the bottom of this page.
+
 ---
 
 ## Bash installer
@@ -92,3 +94,33 @@ Each `forja` command resolves the agent bundle directory in this order — the f
 6. `./jvmti-agent/build/outputs/agent` (fallback for in-repo development)
 
 If none exists, forja exits with an error telling you to install, set `FORJA_BUNDLE_DIR`, or build from source.
+
+---
+
+## Updating
+
+### macOS / Linux
+
+The same bash one-liner is the update command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tkhskt/forja/main/install.sh | bash
+```
+
+install.sh always re-resolves the latest tag via the GitHub API and overwrites the binary. The agent directory under `$PREFIX/share/forja/agent/` is **wiped and recopied** on every run, so any `.so` file removed in a future release won't linger from a previous install.
+
+To pin a specific version (e.g. for downgrading or reproducing a bug report):
+
+```bash
+FORJA_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/tkhskt/forja/main/install.sh | bash
+```
+
+Confirm the running version:
+
+```bash
+forja --version
+```
+
+### Windows
+
+Re-download the matching `.zip` from [Releases](https://github.com/tkhskt/forja/releases) and replace `bin/forja.exe` plus the contents of your agent directory (whatever `FORJA_BUNDLE_DIR` points at, or `%USERPROFILE%\.local\share\forja\agent\` by default). Deleting the old agent directory before extracting the new one is recommended for the same "no lingering files" reason as the bash installer.
