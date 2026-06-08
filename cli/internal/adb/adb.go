@@ -163,14 +163,32 @@ func (a *ADB) PrimaryABI(ctx context.Context) (string, error) {
 	return s, nil
 }
 
-// listDebugScript scans /proc cmdline for FQDN-shaped names then checks
-// run-as for each. Reads /proc/PID/cmdline (not ps's comm column) because the
-// latter truncates at 16 bytes on some kernels.
+// listDebugScript collects the applicationIds of running processes and keeps
+// the ones run-as can act on (= debuggable). It reads /proc/PID/cmdline
+// (not ps's comm column, which truncates at 16 bytes on some kernels).
 //
-// Trailing `; true` is critical: the while-read pipeline's last iteration
-// may end on a non-debuggable app, which would make run-as exit 1 and
-// poison the pipeline's exit code. We rely on stdout content, not exit code.
-const listDebugScript = `for d in /proc/[0-9]*; do tr -d '\0' < $d/cmdline 2>/dev/null; echo; done | grep -E '^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+$' | sort -u | while read p; do run-as "$p" true 2>/dev/null && echo "$p"; done; true`
+// The cmdline harvest is a single `cat ... | tr` rather than a per-process
+// loop. The obvious form — `for d in /proc/[0-9]*; do tr -d '\0' <
+// $d/cmdline; echo; done` — forks `tr` once PER PROCESS, and a busy device
+// (the kind with lots of apps installed/running) easily has 300+ processes,
+// so that loop alone cost ~1s and dominated `forja rules` startup. Reading
+// every cmdline with one `cat` and splitting NULs with one `tr` drops that
+// to ~0.05s. Each cmdline is NUL-terminated, so concatenating them and
+// turning NULs into newlines yields one argv token per line; the strict
+// FQDN grep then keeps only package-name-shaped tokens (stray argv entries
+// like flags or paths don't match, and any that slip through are harmless
+// since run-as rejects them).
+//
+// The run-as probe is then run concurrently, throttled to 16 in flight
+// (`& ... [ i%16 ] && wait`) so a device with many candidates doesn't pay a
+// sequential fork-per-package penalty. The consumer side is wrapped in a
+// `{ ...; wait; }` group so the trailing wait reaps every backgrounded probe
+// before the group's stdout closes; a closing `| sort -u` restores the
+// deterministic ordering the parallel echoes would otherwise scramble.
+//
+// Trailing `; true` keeps the overall exit code 0 regardless of the last
+// run-as result; the Go caller relies on stdout content, not exit status.
+const listDebugScript = `cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\0' '\n' | grep -E '^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)+$' | sort -u | { i=0; while read p; do (run-as "$p" true 2>/dev/null && echo "$p") & i=$((i+1)); [ $((i%16)) -eq 0 ] && wait; done; wait; } | sort -u; true`
 
 // ListDebuggableApps enumerates running app processes whose applicationId is
 // debuggable (= run-as works against them).
