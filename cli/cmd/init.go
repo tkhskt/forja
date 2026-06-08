@@ -14,14 +14,17 @@ import (
 // the file, yaml.v3's encoder will strip these comments — that's fine, by
 // then the user has rules of their own to read for reference.
 //
-// No `rules: []` placeholder is emitted: the file is intentionally comment-
-// only on init. yaml.v3 parses a comment-only document into a zero-value
-// RulesFile (Rules == nil), and the first `rules add` appends to that nil
-// slice and materializes the `rules:` key naturally on save.
+// The `rules:` key appears only inside the commented example, never as a
+// live key: the file is intentionally comment-only on init. yaml.v3 parses a
+// comment-only document into a zero-value RulesFile (Rules == nil), and the
+// first `rules add` appends to that nil slice and materializes the real
+// `rules:` key naturally on save.
 const initialRulesYml = `# forja rule catalog. Hand-editable.
 #
-# Each rule has a unique 'name', an optional 'match', and a 'response':
+# Rules live under a top-level 'rules:' list. Each rule has a unique 'name',
+# an optional 'match', and a 'response':
 #
+# rules:
 #   - name: example-mock
 #     match:
 #       host: example.com           # exact host match
