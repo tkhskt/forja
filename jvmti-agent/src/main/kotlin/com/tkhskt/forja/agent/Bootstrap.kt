@@ -1,5 +1,6 @@
 package com.tkhskt.forja.agent
 
+import com.tkhskt.forja.RulesInterceptor
 import dalvik.system.DexClassLoader
 import java.io.File
 
@@ -8,21 +9,23 @@ import java.io.File
  *
  *  1. `inject(appLoader, dexPath, optDirPath)` merges `agent-bundle.dex`
  *     into appLoader's pathList.dexElements so RulesInterceptor /
- *     FileRulesProvider / Rule become visible through the host app's
+ *     FileRulesProvider / Bootstrap become visible through the host app's
  *     classloader.
  *
  *  2. `enableSelfDestructMode(appLoader)` flips FileRulesProvider into the
  *     mode where rules.json is consumed-and-deleted on read.
  *
- *  3. `modifyExistingClients(clients, appLoader)` walks the OkHttpClient
- *     instances the agent harvested via JVMTI's IterateOverInstancesOfClass
- *     and reflectively replaces each one's `interceptors` field with
- *     `[RulesInterceptor] + original list`.
+ *  3. `wrapInterceptors(original)` is the *exit-hook target*. The agent
+ *     rewrites `okhttp3.OkHttpClient.interceptors()` (via slicer) so its
+ *     return value is routed through this method, which prepends a
+ *     `RulesInterceptor`. OkHttp calls `interceptors()` once per request to
+ *     assemble the chain, so this covers every client — existing and future —
+ *     without touching instance fields. The instrumented getter stays
+ *     JIT-compiled, so there's no deopt and no per-client main-thread work.
  *
  * Non-SDK API touched via reflection:
  *   - `dalvik.system.BaseDexClassLoader.pathList`
  *   - `dalvik.system.DexPathList.dexElements`
- *   - `okhttp3.OkHttpClient.interceptors` (private final, Kotlin val)
  *
  * Debuggable apps have hidden-API restrictions disabled, so this works
  * without root.
@@ -85,42 +88,34 @@ object Bootstrap {
     }
 
     /**
-     * @param clients   Array of OkHttpClient instances the agent harvested via
-     *                  JVMTI IterateOverInstancesOfClass + GetObjectsWithTags
-     *                  (passed in as `jobject[]`, so the static type is Array<Any>).
-     * @param appLoader Classloader used to resolve RulesInterceptor / OkHttpClient.
-     * @return The number of instances whose interceptors were actually swapped.
+     * Exit-hook target for `okhttp3.OkHttpClient.interceptors()`.
+     *
+     * Called with the getter's original return value (the app's application
+     * interceptor list) on every request. Returns a new list with a single
+     * [RulesInterceptor] prepended so it runs first and sees the final logical
+     * response. Idempotent: if a RulesInterceptor is already present (e.g. the
+     * list is cached and re-read), the original is returned unchanged.
+     *
+     * The JVM signature is `(Ljava/util/List;)Ljava/util/List;`, which slicer's
+     * ExitHook auto-matches to the instrumented method's return type. This
+     * resolves through `appLoader` (where both Bootstrap and RulesInterceptor
+     * live after [inject]). It must never throw into OkHttp, so any failure
+     * falls back to the original list.
      */
     @JvmStatic
-    fun modifyExistingClients(clients: Array<Any>, appLoader: ClassLoader): Int {
-        if (clients.isEmpty()) return 0
-
-        val ruleClass = appLoader.loadClass("com.tkhskt.forja.RulesInterceptor")
-        val ruleCtor = ruleClass.getDeclaredConstructor()
-
-        val clientClass = appLoader.loadClass("okhttp3.OkHttpClient")
-        // OkHttp 4.x: `@get:JvmName("interceptors") val interceptors: List<Interceptor>`
-        // At the JVM level this is `private final List interceptors`. On ART,
-        // Field.set works on final fields after setAccessible(true) (different
-        // from JDK 17+'s behavior).
-        val interceptorsField = clientClass
-            .getDeclaredField("interceptors")
-            .apply { isAccessible = true }
-
-        var modified = 0
-        for (client in clients) {
-            @Suppress("UNCHECKED_CAST")
-            val orig = interceptorsField.get(client) as List<Any>
-            // Skip instances that already have a RulesInterceptor — avoid
-            // double-attach.
-            if (orig.any { ruleClass.isInstance(it) }) continue
-            val wrapped = ArrayList<Any>(orig.size + 1).apply {
-                add(ruleCtor.newInstance())
-                addAll(orig)
+    fun wrapInterceptors(original: List<Any?>?): List<Any?> {
+        val src = original ?: return emptyList()
+        return try {
+            if (src.any { it is RulesInterceptor }) {
+                src
+            } else {
+                ArrayList<Any?>(src.size + 1).apply {
+                    add(RulesInterceptor())
+                    addAll(src)
+                }
             }
-            interceptorsField.set(client, wrapped)
-            modified++
+        } catch (t: Throwable) {
+            src
         }
-        return modified
     }
 }

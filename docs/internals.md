@@ -8,11 +8,13 @@ When forja pushes to a device (via `forja apply`, the `rules` TUI's save action,
 2. If the PID differs from the cached one, the app was restarted, so re-attach the agent via `adb shell cmd activity attach-agent`
 3. Merge `forja/rules.yml` + `rules.local.yml`, filter by `status.json[app].enabled`, convert to device JSON, and write it to `/data/data/<app>/files/rules.json`
 
-The agent (`agent-bundle.dex`) at attach time:
+The agent (`libforja-agent.so` + `agent-bundle.dex`) at attach time:
 
 - Enables `FileRulesProvider`'s **self-destruct mode**
-- Walks every existing `OkHttpClient` instance via reflection and inserts the `RulesInterceptor`
-- Sets a breakpoint on `OkHttpClient$Builder.build()` with per-thread MethodExit so new clients are caught too
+- Acquires only `can_retransform_classes`, then rewrites the dex bytecode of `okhttp3.OkHttpClient.interceptors()` with an **exit hook** (via the vendored [`slicer`](../jvmti-agent/src/main/cpp/slicer) library) that routes the getter's return value through `Bootstrap.wrapInterceptors`, prepending a `RulesInterceptor`
+- Applies it to the already-loaded class with `RetransformClasses`; the `ClassFileLoadHook` stays armed so a class loaded later by a secondary classloader is instrumented too
+
+Because OkHttp calls `interceptors()` once per request to assemble the chain, this single method hook covers **every** client — existing and future — without a heap walk, without reflection on instance fields, and without a JVMTI breakpoint. The instrumented getter stays JIT-compiled, so there is no sustained deoptimization and no per-client work on the main thread. This mirrors how Android Studio's NetworkInspector (ArtTooling) injects its interceptor.
 
 Each time OkHttp calls `interceptor.rules()`:
 
@@ -32,7 +34,7 @@ The net result:
 | Symptom | Check |
 |---|---|
 | `app not running` error | Is the app actually launched? (`adb shell pidof <app>`) |
-| Rewrite isn't applied after attach | `adb logcat -s ForjaAgent Forja` — look for `capabilities:` and `loaded N rule(s)` |
+| Rewrite isn't applied after attach | `adb logcat -s ForjaAgent Forja` — look for `instrumented okhttp3.OkHttpClient.interceptors()`, `retransformed okhttp3.OkHttpClient`, and `loaded N rule(s)` |
 | `am attach-agent` failure | Is the app debuggable? On API 28+? Already running? |
 | forja can't find the agent bundle | See the [bundle search order](install.md#bundle-search-order) |
 
@@ -58,8 +60,10 @@ runtime/                 ... on-device runtime (bundled into agent-bundle.dex)
     Rule.kt
 
 jvmti-agent/             ... C++ JVMTI agent + Kotlin Bootstrap
-  src/main/cpp/agent.cpp
-  src/main/kotlin/com/tkhskt/forja/agent/Bootstrap.kt
+  src/main/cpp/agent.cpp   ... attach, dex inject, slicer-based interceptors() exit hook
+  src/main/cpp/slicer/     ... vendored AOSP dexter slicer (dex bytecode rewriter, Apache-2.0)
+  src/main/cpp/jvmti.h     ... vendored OpenJDK header (GPLv2 + Classpath Exception)
+  src/main/kotlin/com/tkhskt/forja/agent/Bootstrap.kt  ... inject + wrapInterceptors exit-hook target
 ```
 
 ---

@@ -2,13 +2,10 @@
 
 // OkHttp 5 compatibility checks. The fixture app's `ok5` flavor uses
 // com.squareup.okhttp3:okhttp:5.x against the same RulesInterceptor /
-// JVMTI agent paths. These tests verify forja's two rewrite paths still
-// fire on an OkHttp 5 app:
-//
-//   - existing-instance rewrite (IterateOverInstancesOfClass +
-//     reflection on OkHttpClient.interceptors)
-//   - new-instance rewrite (Builder.build() breakpoint +
-//     per-thread MethodExit)
+// JVMTI agent paths. These tests verify forja's rewrite still fires on an
+// OkHttp 5 app via the slicer exit-hook on OkHttpClient.interceptors()
+// (applied with RetransformClasses). Because interceptors() is read per
+// request, this covers both the singleton and new-client buttons.
 package e2e_test
 
 import (
@@ -46,7 +43,7 @@ appId: com.tkhskt.forja.sample.ok5
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 418.*"
-    timeout: 15000
+    timeout: 30000
 - assertVisible:
     text: ".*forja-ok5.*"
 `)
@@ -60,7 +57,7 @@ appId: com.tkhskt.forja.sample.ok5
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 418.*"
-    timeout: 15000
+    timeout: 30000
 - assertVisible:
     text: ".*forja-ok5.*"
 `)
@@ -90,7 +87,7 @@ appId: com.tkhskt.forja.sample.ok5
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 418.*"
-    timeout: 15000
+    timeout: 30000
 `)
 
 	runForja(t, "off", "--app", AppOk5Dev)
@@ -103,6 +100,6 @@ appId: com.tkhskt.forja.sample.ok5
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 200.*"
-    timeout: 15000
+    timeout: 30000
 `)
 }

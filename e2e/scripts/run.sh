@@ -11,8 +11,14 @@
 #   e2e/scripts/run.sh -run TestCoreBasicRewrite  # one test
 #   FORJA_E2E_KEEP=1 e2e/scripts/run.sh         # keep the emulator alive
 #
+# The whole suite (~33 tests, each booting/attaching against a real emulator)
+# easily exceeds `go test`'s default 10m timeout on a cold-booted AVD — which
+# manifests as a `panic: test timed out` mid-run, not a real failure. So we set
+# a generous default timeout. Override with FORJA_E2E_TIMEOUT, or by passing
+# your own `-timeout` (a later flag wins over this default).
+#
 # Run from anywhere — the script cd's to the e2e/ directory itself.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-exec go test -count=1 -tags e2e -v "$@" ./...
+exec go test -count=1 -tags e2e -timeout "${FORJA_E2E_TIMEOUT:-30m}" -v "$@" ./...

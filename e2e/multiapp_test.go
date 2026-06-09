@@ -82,7 +82,7 @@ appId: com.tkhskt.forja.sample.staging
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 200.*"
-    timeout: 15000
+    timeout: 30000
 `)
 }
 
@@ -126,7 +126,7 @@ appId: com.tkhskt.forja.sample.staging
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 200.*"
-    timeout: 15000
+    timeout: 30000
 `)
 }
 
@@ -162,7 +162,7 @@ appId: com.tkhskt.forja.sample
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 418.*"
-    timeout: 15000
+    timeout: 30000
 - assertVisible:
     text: ".*shared-rule.*"
 `)
@@ -176,7 +176,7 @@ appId: com.tkhskt.forja.sample.staging
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 418.*"
-    timeout: 15000
+    timeout: 30000
 - assertVisible:
     text: ".*shared-rule.*"
 `)
@@ -196,7 +196,7 @@ appId: com.tkhskt.forja.sample.staging
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 418.*"
-    timeout: 15000
+    timeout: 30000
 `)
 
 	// status.json should reflect: shared off for dev, on for staging.
@@ -237,7 +237,7 @@ appId: com.tkhskt.forja.sample.staging
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 418.*"
-    timeout: 15000
+    timeout: 30000
 `)
 
 	// Single update should auto-push to BOTH pkgs.
@@ -252,7 +252,7 @@ appId: com.tkhskt.forja.sample
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 503.*"
-    timeout: 15000
+    timeout: 30000
 `)
 	startMainActivity(t, AppStaging)
 	runInlineMaestro(t, `
@@ -263,7 +263,7 @@ appId: com.tkhskt.forja.sample.staging
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 503.*"
-    timeout: 15000
+    timeout: 30000
 `)
 }
 
@@ -310,6 +310,6 @@ appId: com.tkhskt.forja.sample.staging
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 503.*"
-    timeout: 15000
+    timeout: 30000
 `)
 }

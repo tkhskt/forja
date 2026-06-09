@@ -13,6 +13,11 @@
 #   FORJA_E2E_ABI          Force a specific ABI (default: auto-pick from host arch)
 #   FORJA_E2E_TAG          Force image tag, e.g. google_apis / google_apis_playstore
 #                          (default: auto-pick from what's installed)
+#   FORJA_E2E_NO_BORROW    When set (non-empty), never reuse an already-connected
+#                          device — always create/boot an owned AVD. Used by the
+#                          per-API matrix runner (run_matrix.sh) so FORJA_E2E_API
+#                          actually takes effect instead of borrowing whatever is
+#                          already running.
 #   FORJA_E2E_STATUS_FILE  Path for the owner-vs-borrow status file
 #                          (default: ${TMPDIR:-/tmp}/forja-e2e-emulator.status)
 
@@ -88,13 +93,42 @@ if ! command -v adb >/dev/null 2>&1; then
     fi
 fi
 
-# --- Already-running device? Reuse it. -------------------------------------
+# --- Already-running device? Reuse it (unless the matrix forbids borrowing). -
 
-if adb devices | awk 'NR>1 && $2=="device" {found=1} END{exit !found}'; then
+if [ -z "${FORJA_E2E_NO_BORROW:-}" ] && \
+   adb devices | awk 'NR>1 && $2=="device" {found=1} END{exit !found}'; then
     echo "[setup] re-using already-connected device:"
     adb devices | awk 'NR>1 && $2=="device" {print "  "$0}'
     printf '{"owned":false}\n' > "$STATUS_FILE"
     exit 0
+fi
+
+if [ -n "${FORJA_E2E_NO_BORROW:-}" ]; then
+    echo "[setup] FORJA_E2E_NO_BORROW set — booting an owned AVD (no borrow)" >&2
+fi
+
+# --- Pre-flight: avdmanager/sdkmanager must actually run --------------------
+#
+# The legacy `tools/bin` avdmanager/sdkmanager (and old cmdline-tools revisions)
+# depend on JAXB (javax.xml.bind), which was removed from the JDK in 11+ (JEP
+# 320). On a modern default JDK they crash with NoClassDefFoundError deep inside
+# AVD creation. Probe once here and surface an actionable hint instead.
+if ! avd_probe="$("$AVDMANAGER" list avd 2>&1)"; then
+    echo "ERROR: avdmanager could not run." >&2
+    if printf '%s' "$avd_probe" | grep -qE 'javax.xml.bind|NoClassDefFoundError'; then
+        echo "  Cause: this avdmanager needs JAXB (javax.xml.bind), removed in JDK 11+" >&2
+        echo "         (JEP 320), so it can't run under the current JDK." >&2
+        echo "  Fixes (either one):" >&2
+        echo "   - Install 'Android SDK Command-line Tools (latest)' via Android Studio" >&2
+        echo "     → SDK Manager → SDK Tools. Newer cmdline-tools run on JDK 17 and are" >&2
+        echo "     picked up automatically (cmdline-tools/latest/bin)." >&2
+        echo "   - Or point JAVA_HOME at a JDK that still bundles JAXB (e.g. JDK 8) for" >&2
+        echo "     this run only." >&2
+        echo "  avdmanager in use: $AVDMANAGER" >&2
+    else
+        printf '%s\n' "$avd_probe" | sed 's/^/  /' >&2
+    fi
+    exit 1
 fi
 
 # --- Pick a system image -----------------------------------------------------
@@ -161,14 +195,30 @@ else
         exit 2
     fi
     echo "[setup] installing system image: $SYSTEM_IMAGE ..." >&2
-    yes | "$SDKMANAGER" --install "$SYSTEM_IMAGE" >/dev/null
+    # `yes` auto-accepts license prompts, but it gets SIGPIPE (exit 141) once
+    # sdkmanager closes stdin — under `set -euo pipefail` that would fail the
+    # step even though sdkmanager itself succeeded. Inspect sdkmanager's own
+    # exit via PIPESTATUS and ignore the benign 141 from `yes`.
+    set +e +o pipefail
+    yes 2>/dev/null | "$SDKMANAGER" --install "$SYSTEM_IMAGE" >/dev/null
+    sdk_status="${PIPESTATUS[1]}"
+    set -e -o pipefail
+    if [ "${sdk_status:-1}" -ne 0 ]; then
+        echo "ERROR: sdkmanager --install $SYSTEM_IMAGE failed (exit $sdk_status)." >&2
+        echo "       If you saw an 'SDK XML versions up to 3 ... version 4 was" >&2
+        echo "       encountered' warning, this sdkmanager is older than the SDK" >&2
+        echo "       metadata — install 'Android SDK Command-line Tools (latest)'" >&2
+        echo "       (Android Studio → SDK Manager → SDK Tools) so it's picked up" >&2
+        echo "       from cmdline-tools/latest/bin." >&2
+        exit 1
+    fi
 fi
 
 SYSTEM_IMAGE="system-images;android-${API_LEVEL};${TAG};${ABI}"
 
 # --- Create AVD if it doesn't already exist --------------------------------
 
-if ! "$AVDMANAGER" list avd 2>/dev/null | grep -q "Name: ${AVD_NAME}$"; then
+if ! printf '%s\n' "$avd_probe" | grep -q "Name: ${AVD_NAME}$"; then
     echo "[setup] creating AVD: $AVD_NAME (api=$API_LEVEL tag=$TAG abi=$ABI)" >&2
     echo "no" | "$AVDMANAGER" create avd \
         --name "$AVD_NAME" \
@@ -205,6 +255,32 @@ if [ "$completed" != "1" ]; then
     kill "$EMULATOR_PID" 2>/dev/null || true
     exit 1
 fi
+
+# `sys.boot_completed=1` can fire before the PackageManager ("package" service)
+# has registered. Installing an APK in that window fails with
+# "cmd: Can't find service: package". Wait until the service actually answers
+# so the fixture install that follows doesn't race a half-up system.
+#
+# Note: `cmd package ...` can exit 0 while printing "Can't find service:
+# package", so trusting the exit code is not enough — require real `package:`
+# output. Capture into a var (no pipe) to avoid a grep-SIGPIPE false negative.
+echo "[setup] waiting for the package service (up to 180s) ..." >&2
+pkg_ready=""
+for i in $(seq 1 90); do
+    pkg_out="$(adb shell cmd package list packages 2>/dev/null || true)"
+    case "$pkg_out" in
+        *package:*) pkg_ready=1; break ;;
+    esac
+    sleep 2
+done
+if [ -z "$pkg_ready" ]; then
+    echo "ERROR: package service not ready within 180s" >&2
+    kill "$EMULATOR_PID" 2>/dev/null || true
+    exit 1
+fi
+# First-boot churn can briefly (re)start services after the package manager
+# first answers; a short settle keeps the install from racing that.
+sleep 5
 
 # Reduce flakiness from animations / lock screen.
 adb shell settings put global window_animation_scale 0 >/dev/null 2>&1 || true

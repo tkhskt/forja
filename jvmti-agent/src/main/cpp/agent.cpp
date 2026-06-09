@@ -1,40 +1,45 @@
 // forja JVMTI agent — attaches to a debuggable Android app and inserts the
-// forja RulesInterceptor into the interceptor chain of every OkHttpClient
-// instance in the process. Uses only standard JVMTI (no dependency on
-// Android Studio internal APIs like NetworkInspector). Zero-touch: requires
-// no build changes on the host app.
+// forja RulesInterceptor into the application interceptor chain of every
+// OkHttpClient in the process.
+//
+// Mechanism (mirrors Android Studio's NetworkInspector / ArtTooling):
+// instead of JVMTI breakpoints + per-thread MethodExit (which deoptimize the
+// hooked method and run injection on the calling thread), we rewrite the dex
+// bytecode of okhttp3.OkHttpClient.interceptors() with an *exit hook* using
+// the slicer library. The hook forwards the method's return value through
+//
+//     com.tkhskt.forja.agent.Bootstrap.wrapInterceptors(List): List
+//
+// which prepends a RulesInterceptor. Because OkHttp calls interceptors() once
+// per request to assemble the chain, this covers every client (existing and
+// future) without a heap walk, without reflection on instance fields, and
+// without a breakpoint — and the instrumented method stays JIT-compiled, so
+// there is no sustained deopt and no main-thread stall on client creation.
 //
 // Flow:
 //   am attach-agent <pkg> "<so_path>=<dex_path>"
-//     ↓
-//   Agent_OnAttach(vm, options="<dex_path>")
-//     ↓
-//   1. Acquire JVMTI capabilities (can_tag_objects,
-//      can_generate_breakpoint_events, can_generate_method_exit_events).
-//   2. Get the app Context via ActivityThread.currentActivityThread().getApplication().
-//   3. context.getClassLoader() → the app's PathClassLoader (appLoader).
-//   4. Load Bootstrap through a child DexClassLoader(dexPath, codeCacheDir,
-//      null, appLoader).
-//   5. Bootstrap.inject(appLoader, dexPath, codeCacheDir) merges the DEX into
-//      appLoader.
-//   6. appLoader.loadClass("okhttp3.OkHttpClient") + JVMTI's
-//      IterateOverInstancesOfClass + GetObjectsWithTags to collect every
-//      existing instance.
-//   7. Call Bootstrap.modifyExistingClients(instances, appLoader) which
-//      replaces each instance's `interceptors` field with
-//      `[RulesInterceptor] + original list`.
-//
-// For NEW clients (OkHttpClients created via Builder.build() AFTER attach),
-// we set a breakpoint on Builder.build() and use per-thread MethodExit to
-// pick up the returned instance and run the same swap. On devices where
-// `can_generate_*` is not granted, only existing instances are rewritten
-// (= degraded mode).
+//     -> Agent_OnAttach(vm, options="<dex_path>")
+//        1. Acquire can_retransform_classes.
+//        2. Resolve the app's PathClassLoader (ActivityThread reflection).
+//        3. Bootstrap.inject() merges agent-bundle.dex into appLoader so
+//           RulesInterceptor / FileRulesProvider / Bootstrap are visible
+//           through the host app's classloader.
+//        4. Enable self-destruct mode on FileRulesProvider.
+//        5. Register a ClassFileLoadHook that instruments
+//           okhttp3.OkHttpClient.interceptors() via slicer, then call
+//           RetransformClasses on the already-loaded OkHttpClient to apply it.
 
 #include <jni.h>
 #include "jvmti.h"
 #include <android/log.h>
 #include <cstring>
+#include <memory>
 #include <string>
+
+#include "slicer/dex_format.h"
+#include "slicer/instrumentation.h"
+#include "slicer/reader.h"
+#include "slicer/writer.h"
 
 #define LOG_TAG "ForjaAgent"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
@@ -43,21 +48,26 @@
 
 namespace {
 
-constexpr const char* kOkHttpClientDotted = "okhttp3.OkHttpClient";
-constexpr const char* kBuilderDotted      = "okhttp3.OkHttpClient$Builder";
-constexpr const char* kBuilderBuildName   = "build";
-constexpr const char* kBuilderBuildSig    = "()Lokhttp3/OkHttpClient;";
-constexpr const char* kBootstrapClass     = "com.tkhskt.forja.agent.Bootstrap";
+// okhttp3.OkHttpClient — dotted (loadClass), internal (ClassFileLoadHook name)
+// and descriptor (slicer) forms.
+constexpr const char* kOkHttpClientDotted   = "okhttp3.OkHttpClient";
+constexpr const char* kOkHttpClientInternal = "okhttp3/OkHttpClient";
+constexpr const char* kOkHttpClientDesc     = "Lokhttp3/OkHttpClient;";
 
-// Globals used by the new-client hook (Breakpoint + MethodExit).
+// OkHttp 4.x/5.x: `@get:JvmName("interceptors") val interceptors: List<...>`
+// compiles to a JVM method `List interceptors()`. This is the application
+// interceptor list OkHttp reads once per call (RealCall) to build the chain.
+constexpr const char* kInterceptorsMethod = "interceptors";
+constexpr const char* kInterceptorsSig    = "()Ljava/util/List;";
+
+constexpr const char* kBootstrapClass = "com.tkhskt.forja.agent.Bootstrap";
+constexpr const char* kBootstrapDesc  = "Lcom/tkhskt/forja/agent/Bootstrap;";
+constexpr const char* kWrapMethod     = "wrapInterceptors";
+
 // All const-after-init — only Agent_OnAttach writes to them.
-JavaVM*   gVm                  = nullptr;
-jvmtiEnv* gJvmti               = nullptr;
-jobject   gAppLoaderGlobalRef  = nullptr;   // app PathClassLoader (global ref)
-jmethodID gBuildMid            = nullptr;   // okhttp3.OkHttpClient$Builder.build()
-jclass    gBootstrapClassRef   = nullptr;   // com.tkhskt.forja.agent.Bootstrap (global ref)
-jmethodID gBootstrapModifyMid  = nullptr;   // Bootstrap.modifyExistingClients([Ljava/lang/Object;Ljava/lang/ClassLoader;)I
-jclass    gObjectClassRef      = nullptr;   // java.lang.Object (global ref) — array element type
+JavaVM*   gVm                 = nullptr;
+jvmtiEnv* gJvmti              = nullptr;
+jobject   gAppLoaderGlobalRef = nullptr;   // app PathClassLoader (global ref)
 
 // --- Exception-checking helpers ----------------------------------------
 
@@ -255,10 +265,9 @@ bool MergeOurDexIntoApp(JNIEnv* env, jobject appLoader, const char* dexPath, con
     return true;
 }
 
-// --- Modify existing OkHttpClient instances ----------------------------
-
-/// Helper that loads an arbitrary class via appLoader. Takes a dotted name
-/// (e.g. "okhttp3.OkHttpClient").
+/// Loads an arbitrary class via appLoader. Takes a dotted name
+/// (e.g. "okhttp3.OkHttpClient"). Returns nullptr (exception cleared) if the
+/// class isn't in the app's classpath.
 jclass LoadAppClass(JNIEnv* env, jobject appLoader, const char* dottedName) {
     jclass clClass = env->FindClass("java/lang/ClassLoader");
     if (clClass == nullptr) { env->ExceptionClear(); return nullptr; }
@@ -267,243 +276,110 @@ jclass LoadAppClass(JNIEnv* env, jobject appLoader, const char* dottedName) {
     if (loadClass == nullptr) { env->ExceptionClear(); return nullptr; }
     jstring jName = env->NewStringUTF(dottedName);
     auto cls = static_cast<jclass>(env->CallObjectMethod(appLoader, loadClass, jName));
+    if (env->ExceptionCheck()) env->ExceptionClear();
     env->DeleteLocalRef(jName);
     env->DeleteLocalRef(clClass);
     return cls;
 }
 
-/// IterateOverInstancesOfClass callback. Tags every matching object with 1.
-jvmtiIterationControl JNICALL TagAllInstancesCallback(
-        jlong /*class_tag*/, jlong /*size*/, jlong* tag_ptr, void* /*user_data*/) {
-    *tag_ptr = 1;
-    return JVMTI_ITERATION_CONTINUE;
-}
-
-/// Resolve the Bootstrap class + Bootstrap.modifyExistingClients jmethodID
-/// and cache them as global refs in gBootstrap*** so subsequent callbacks
-/// can invoke them immediately. Called once from Agent_OnAttach.
-bool ResolveAndCacheBootstrap(JNIEnv* env, jobject appLoader) {
-    jclass bootLocal = LoadAppClass(env, appLoader, kBootstrapClass);
-    if (env->ExceptionCheck() || bootLocal == nullptr) {
-        DescribePendingException(env, "appLoader.loadClass(Bootstrap)");
-        return false;
-    }
-    gBootstrapClassRef = static_cast<jclass>(env->NewGlobalRef(bootLocal));
-    env->DeleteLocalRef(bootLocal);
-
-    gBootstrapModifyMid = env->GetStaticMethodID(
-        gBootstrapClassRef, "modifyExistingClients",
-        "([Ljava/lang/Object;Ljava/lang/ClassLoader;)I");
-    if (gBootstrapModifyMid == nullptr) {
-        DescribePendingException(env, "GetStaticMethodID Bootstrap.modifyExistingClients");
-        return false;
-    }
-
-    jclass objLocal = env->FindClass("java/lang/Object");
-    if (objLocal == nullptr) { env->ExceptionClear(); return false; }
-    gObjectClassRef = static_cast<jclass>(env->NewGlobalRef(objLocal));
-    env->DeleteLocalRef(objLocal);
-    return true;
-}
-
-/// Assemble jobject[1] = {client} and call Bootstrap.modifyExistingClients.
-/// Precondition: ResolveAndCacheBootstrap has succeeded and
-/// gAppLoaderGlobalRef is non-null.
-int InvokeModifyForClients(JNIEnv* env, jobjectArray clients) {
-    jint modified = env->CallStaticIntMethod(
-        gBootstrapClassRef, gBootstrapModifyMid, clients, gAppLoaderGlobalRef);
-    if (env->ExceptionCheck()) {
-        DescribePendingException(env, "Bootstrap.modifyExistingClients");
-        return -1;
-    }
-    return static_cast<int>(modified);
-}
-
-/// Collect every existing OkHttpClient instance and pass them to
-/// Bootstrap.modifyExistingClients. Runs once, right after Agent_OnAttach.
-bool ModifyExistingOkHttpClients(JNIEnv* env, jvmtiEnv* jvmti, jobject appLoader) {
-    jclass okClass = LoadAppClass(env, appLoader, kOkHttpClientDotted);
-    if (env->ExceptionCheck()) {
-        DescribePendingException(env, "appLoader.loadClass(okhttp3.OkHttpClient)");
-        return false;
-    }
-    if (okClass == nullptr) {
-        LOGW("%s is not loaded in app classpath; nothing to modify", kOkHttpClientDotted);
-        return true;  // App doesn't use OkHttp; not an error.
-    }
-
-    // 1) Tag every okhttp3.OkHttpClient instance with 1.
-    if (auto err = jvmti->IterateOverInstancesOfClass(
-            okClass, JVMTI_HEAP_OBJECT_EITHER, &TagAllInstancesCallback, nullptr);
-        err != JVMTI_ERROR_NONE) {
-        LOGE("IterateOverInstancesOfClass failed: %d", err);
-        return false;
-    }
-
-    // 2) Collect all objects with tag=1 in one shot.
-    jlong tags[] = { 1 };
-    jint count = 0;
-    jobject* objects = nullptr;
-    if (auto err = jvmti->GetObjectsWithTags(1, tags, &count, &objects, nullptr);
-        err != JVMTI_ERROR_NONE) {
-        LOGE("GetObjectsWithTags failed: %d", err);
-        return false;
-    }
-    LOGI("IterateOverInstancesOfClass returned %d %s instance(s)",
-         static_cast<int>(count), kOkHttpClientDotted);
-
-    if (count == 0) {
-        if (objects != nullptr) jvmti->Deallocate(reinterpret_cast<unsigned char*>(objects));
-        LOGI("no existing OkHttpClient instances yet; nothing to modify");
-        return true;
-    }
-
-    // 3) Move the jobject[] into a Java Object[].
-    jobjectArray jArr = env->NewObjectArray(count, gObjectClassRef, nullptr);
-    if (jArr == nullptr) {
-        env->ExceptionClear();
-        LOGE("NewObjectArray(%d) failed", static_cast<int>(count));
-        jvmti->Deallocate(reinterpret_cast<unsigned char*>(objects));
-        return false;
-    }
-    for (jint i = 0; i < count; ++i) {
-        env->SetObjectArrayElement(jArr, i, objects[i]);
-    }
-    jvmti->Deallocate(reinterpret_cast<unsigned char*>(objects));
-
-    // 4) Clear the tags so the next IterateOverInstancesOfClass call starts clean.
-    auto clearCb = [](jlong, jlong, jlong* t, void*) -> jvmtiIterationControl {
-        *t = 0;
-        return JVMTI_ITERATION_CONTINUE;
-    };
-    jvmti->IterateOverInstancesOfClass(okClass, JVMTI_HEAP_OBJECT_TAGGED, clearCb, nullptr);
-
-    // 5) Invoke Bootstrap.modifyExistingClients.
-    int modified = InvokeModifyForClients(env, jArr);
-    if (modified < 0) return false;
-    LOGI("modifyExistingClients (existing): %d / %d instance(s) updated",
-         modified, static_cast<int>(count));
-    env->DeleteLocalRef(jArr);
-    return true;
-}
-
-// --- New-client hook (Breakpoint + per-thread MethodExit) --------------
-
-/// Called right after Builder.build() returns. Routes the new OkHttpClient
-/// through modifyExistingClients.
-void HandleNewClient(JNIEnv* env, jobject newClient) {
-    if (newClient == nullptr) return;
-    jobjectArray jArr = env->NewObjectArray(1, gObjectClassRef, newClient);
-    if (jArr == nullptr) {
-        env->ExceptionClear();
-        LOGE("NewObjectArray(1) failed (new client path)");
+/// Flip FileRulesProvider into consume-and-delete mode. Loaded via appLoader
+/// (not the agent's own loader) so the singleton state isn't split across two
+/// classloaders. Non-fatal on failure (we just keep rules.json on disk).
+void EnableSelfDestruct(JNIEnv* env, jobject appLoader) {
+    jclass bootClass = LoadAppClass(env, appLoader, kBootstrapClass);
+    if (bootClass == nullptr) {
+        LOGW("Bootstrap not resolvable via appLoader; self-destruct skipped");
         return;
     }
-    int modified = InvokeModifyForClients(env, jArr);
-    if (modified > 0) {
-        LOGI("modifyExistingClients (new): 1 instance via Builder.build()");
+    jmethodID mid = env->GetStaticMethodID(
+        bootClass, "enableSelfDestructMode", "(Ljava/lang/ClassLoader;)V");
+    if (mid == nullptr) {
+        env->ExceptionClear();
+        LOGW("Bootstrap.enableSelfDestructMode not found (persistent mode)");
+        return;
     }
-    env->DeleteLocalRef(jArr);
-}
-
-/// Fires at the entry of Builder.build(). Enables MethodExit just for this
-/// thread, so OnMethodExit catches the build() return on the same thread.
-void JNICALL OnBreakpoint(
-        jvmtiEnv* jvmti, JNIEnv* /*env*/, jthread thread, jmethodID method, jlocation /*loc*/) {
-    if (method != gBuildMid) return;
-    jvmtiError jerr = jvmti->SetEventNotificationMode(
-        JVMTI_ENABLE, JVMTI_EVENT_METHOD_EXIT, thread);
-    if (jerr != JVMTI_ERROR_NONE) {
-        LOGE("SetEventNotificationMode(ENABLE METHOD_EXIT) failed: %d", jerr);
-    }
-}
-
-void JNICALL OnMethodExit(
-        jvmtiEnv* jvmti, JNIEnv* env, jthread thread, jmethodID method,
-        jboolean was_popped_by_exception, jvalue return_value) {
-    // Skip returns from methods that aren't build() — the common case,
-    // exited with minimal cost.
-    if (method != gBuildMid) return;
-
-    // If build() exited via an exception, there is no new client to modify
-    // — just disable.
-    if (!was_popped_by_exception && return_value.l != nullptr) {
-        HandleNewClient(env, return_value.l);
-    }
-    // Our target (build) returned, so disable this thread's MethodExit.
-    // Nested calls aren't expected (OkHttp's Builder doesn't do that).
-    jvmtiError jerr = jvmti->SetEventNotificationMode(
-        JVMTI_DISABLE, JVMTI_EVENT_METHOD_EXIT, thread);
-    if (jerr != JVMTI_ERROR_NONE) {
-        LOGE("SetEventNotificationMode(DISABLE METHOD_EXIT) failed: %d", jerr);
-    }
-}
-
-/// Resolve Builder.build()'s jmethodID and arm a breakpoint at its entry.
-/// On failure, the agent continues in existing-only mode.
-bool SetupBuilderBuildHook(JNIEnv* env, jvmtiEnv* jvmti, jobject appLoader) {
-    jclass builderClass = LoadAppClass(env, appLoader, kBuilderDotted);
+    env->CallStaticVoidMethod(bootClass, mid, appLoader);
     if (env->ExceptionCheck()) {
-        DescribePendingException(env, "appLoader.loadClass(OkHttpClient$Builder)");
-        return false;
+        DescribePendingException(env, "Bootstrap.enableSelfDestructMode");
+        LOGW("self-destruct enable failed (persistent mode)");
+        return;
     }
-    if (builderClass == nullptr) {
-        LOGW("%s not in classpath; new-client hook skipped", kBuilderDotted);
-        return false;
+    LOGI("self-destruct mode enabled on FileRulesProvider");
+}
+
+// --- Bytecode instrumentation (slicer) ---------------------------------
+
+/// dex::Writer allocator backed by JVMTI's Allocate/Deallocate, so the dex
+/// image we return from ClassFileLoadHook is owned by the VM (which frees it
+/// with Deallocate per the JVMTI contract).
+class JvmtiAllocator : public dex::Writer::Allocator {
+ public:
+    explicit JvmtiAllocator(jvmtiEnv* jvmti) : jvmti_(jvmti) {}
+
+    void* Allocate(size_t size) override {
+        unsigned char* mem = nullptr;
+        if (jvmti_->Allocate(size, &mem) != JVMTI_ERROR_NONE) return nullptr;
+        return mem;
+    }
+    void Free(void* ptr) override {
+        if (ptr != nullptr) {
+            jvmti_->Deallocate(reinterpret_cast<unsigned char*>(ptr));
+        }
     }
 
-    gBuildMid = env->GetMethodID(builderClass, kBuilderBuildName, kBuilderBuildSig);
-    if (gBuildMid == nullptr) {
-        DescribePendingException(env, "GetMethodID Builder.build");
-        return false;
+ private:
+    jvmtiEnv* jvmti_;
+};
+
+/// ClassFileLoadHook callback. Fires for every class load (and on
+/// RetransformClasses). For okhttp3.OkHttpClient it rewrites interceptors()
+/// with an exit hook routing the return value through
+/// Bootstrap.wrapInterceptors. All other classes pass through untouched.
+void JNICALL TransformClassFileLoad(
+        jvmtiEnv* jvmti, JNIEnv* /*jni*/, jclass /*class_being_redefined*/,
+        jobject /*loader*/, const char* name, jobject /*protection_domain*/,
+        jint class_data_len, const unsigned char* class_data,
+        jint* new_class_data_len, unsigned char** new_class_data) {
+    if (name == nullptr || std::strcmp(name, kOkHttpClientInternal) != 0) {
+        return;  // Not our class — fast path, leave output untouched.
     }
 
-    if (auto jerr = jvmti->SetBreakpoint(gBuildMid, 0); jerr != JVMTI_ERROR_NONE) {
-        LOGE("SetBreakpoint(Builder.build, 0) failed: %d", jerr);
-        return false;
+    dex::Reader reader(class_data, static_cast<size_t>(class_data_len));
+    dex::u4 index = reader.FindClassIndex(kOkHttpClientDesc);
+    if (index == dex::kNoIndex) {
+        LOGW("okhttp3.OkHttpClient not found in its own dex; skipping");
+        return;
     }
-    if (auto jerr = jvmti->SetEventNotificationMode(
-            JVMTI_ENABLE, JVMTI_EVENT_BREAKPOINT, nullptr);
-        jerr != JVMTI_ERROR_NONE) {
-        LOGE("SetEventNotificationMode(ENABLE BREAKPOINT) failed: %d", jerr);
-        return false;
+    reader.CreateClassIr(index);
+    std::shared_ptr<ir::DexFile> dexIr = reader.GetIr();
+
+    slicer::MethodInstrumenter mi(dexIr);
+    // Tweak::None -> hook signature auto-generated to match the return type,
+    // i.e. (Ljava/util/List;)Ljava/util/List;.
+    mi.AddTransformation<slicer::ExitHook>(
+        ir::MethodId(kBootstrapDesc, kWrapMethod), slicer::ExitHook::Tweak::None);
+
+    if (!mi.InstrumentMethod(
+            ir::MethodId(kOkHttpClientDesc, kInterceptorsMethod, kInterceptorsSig))) {
+        LOGE("slicer InstrumentMethod(OkHttpClient.interceptors) failed");
+        return;
     }
-    LOGI("breakpoint armed on %s.build()", kBuilderDotted);
-    return true;
+
+    dex::Writer writer(dexIr);
+    JvmtiAllocator allocator(jvmti);
+    size_t newSize = 0;
+    dex::u1* image = writer.CreateImage(&allocator, &newSize);
+    if (image == nullptr) {
+        LOGE("slicer CreateImage returned null");
+        return;
+    }
+    *new_class_data = image;
+    *new_class_data_len = static_cast<jint>(newSize);
+    LOGI("instrumented okhttp3.OkHttpClient.interceptors() (%d -> %zu bytes)",
+         class_data_len, newSize);
 }
 
 // --- Init --------------------------------------------------------------
-
-/// can_tag_objects is required (for the heap walk).
-/// can_generate_breakpoint_events / can_generate_method_exit_events are
-/// needed for the new-client hook but some ART devices won't grant them.
-/// When that happens we fall back to existing-only mode.
-///
-/// Returns: hookable (= did we get the new-client capabilities).
-bool AcquireCapabilities(jvmtiEnv* jvmti) {
-    jvmtiCapabilities full = {};
-    full.can_tag_objects = 1;
-    full.can_generate_breakpoint_events = 1;
-    full.can_generate_method_exit_events = 1;
-
-    jvmtiError jerr = jvmti->AddCapabilities(&full);
-    if (jerr == JVMTI_ERROR_NONE) {
-        LOGI("capabilities: tag_objects=YES, breakpoint=YES, method_exit=YES");
-        return true;
-    }
-    LOGW("AddCapabilities(full) failed: %d — retrying without breakpoint/method_exit", jerr);
-
-    jvmtiCapabilities minimal = {};
-    minimal.can_tag_objects = 1;
-    jerr = jvmti->AddCapabilities(&minimal);
-    if (jerr != JVMTI_ERROR_NONE) {
-        LOGE("AddCapabilities(tag_objects) failed: %d", jerr);
-        return false;
-    }
-    LOGW("capabilities: tag_objects=YES, breakpoint=NO, method_exit=NO "
-         "— new clients will NOT be picked up (existing-only mode)");
-    return false;
-}
 
 jint InitAgent(JavaVM* vm, const char* options) {
     if (options == nullptr || options[0] == '\0') {
@@ -520,20 +396,20 @@ jint InitAgent(JavaVM* vm, const char* options) {
     gVm = vm;
     gJvmti = jvmti;
 
-    // Acquire capabilities with fallback. can_tag_objects is the minimum.
-    const bool hookable = AcquireCapabilities(jvmti);
+    // Only can_retransform_classes is required — no breakpoint/method-exit/
+    // tag_objects, so the runtime is never forced into a deoptimized mode.
+    jvmtiCapabilities caps = {};
+    caps.can_retransform_classes = 1;
+    if (auto err = jvmti->AddCapabilities(&caps); err != JVMTI_ERROR_NONE) {
+        LOGE("AddCapabilities(can_retransform_classes) failed: %d", err);
+        return JNI_ERR;
+    }
 
-    // If hookable, wire the Breakpoint / MethodExit callbacks. When the
-    // capabilities weren't granted, SetEventCallbacks is still valid but a
-    // no-op in effect.
-    if (hookable) {
-        jvmtiEventCallbacks cbs = {};
-        cbs.Breakpoint = &OnBreakpoint;
-        cbs.MethodExit = &OnMethodExit;
-        if (auto jerr = jvmti->SetEventCallbacks(&cbs, sizeof(cbs)); jerr != JVMTI_ERROR_NONE) {
-            LOGE("SetEventCallbacks failed: %d", jerr);
-            return JNI_ERR;
-        }
+    jvmtiEventCallbacks cbs = {};
+    cbs.ClassFileLoadHook = &TransformClassFileLoad;
+    if (auto err = jvmti->SetEventCallbacks(&cbs, sizeof(cbs)); err != JVMTI_ERROR_NONE) {
+        LOGE("SetEventCallbacks failed: %d", err);
+        return JNI_ERR;
     }
 
     JNIEnv* env = nullptr;
@@ -554,57 +430,48 @@ jint InitAgent(JavaVM* vm, const char* options) {
     const std::string optDir = GetCodeCacheDir(env);
     LOGI("opt dir = %s", optDir.c_str());
 
-    // 3) Bootstrap.inject() merges the DEX into appLoader.
+    // 3) Merge agent-bundle.dex into appLoader so Bootstrap / RulesInterceptor
+    //    resolve through the host app's classloader. Must happen before the
+    //    instrumented interceptors() runs (and before retransform, for clarity)
+    //    so the injected invoke-static to Bootstrap.wrapInterceptors resolves.
     if (!MergeOurDexIntoApp(env, appLoader, dexPath.c_str(), optDir)) {
         LOGE("Bootstrap.inject failed (dex=%s)", dexPath.c_str());
         return JNI_ERR;
     }
 
-    // 4) Resolve and cache Bootstrap.modifyExistingClients (used by both
-    //    the existing and new-client paths).
-    if (!ResolveAndCacheBootstrap(env, appLoader)) {
-        LOGE("ResolveAndCacheBootstrap failed");
+    // 4) Switch FileRulesProvider into self-destruct mode (non-fatal).
+    EnableSelfDestruct(env, appLoader);
+
+    // 5) Enable the ClassFileLoadHook for the whole session (so OkHttpClient
+    //    loaded later by a secondary classloader is also instrumented), then
+    //    retransform the already-loaded OkHttpClient to apply the hook now.
+    if (auto err = jvmti->SetEventNotificationMode(
+            JVMTI_ENABLE, JVMTI_EVENT_CLASS_FILE_LOAD_HOOK, nullptr);
+        err != JVMTI_ERROR_NONE) {
+        LOGE("SetEventNotificationMode(ENABLE CLASS_FILE_LOAD_HOOK) failed: %d", err);
         return JNI_ERR;
     }
 
-    // 4.5) Switch FileRulesProvider into self-destruct mode. rules.json is
-    //      then consumed-and-deleted, so it fully disappears when the
-    //      process dies. Failure isn't fatal — we just run in persistent
-    //      mode in that case.
-    {
-        jmethodID selfDestructMid = env->GetStaticMethodID(
-            gBootstrapClassRef, "enableSelfDestructMode",
-            "(Ljava/lang/ClassLoader;)V");
-        if (selfDestructMid == nullptr) {
-            env->ExceptionClear();
-            LOGW("Bootstrap.enableSelfDestructMode not found (running in persistent mode)");
+    jclass okClass = LoadAppClass(env, appLoader, kOkHttpClientDotted);
+    if (okClass == nullptr) {
+        LOGW("%s not loaded yet; the load hook will instrument it on first load",
+             kOkHttpClientDotted);
+        LOGI("forja JVMTI agent attached (dex=%s, retransform=DEFERRED)", dexPath.c_str());
+        return JNI_OK;
+    }
+
+    jboolean modifiable = JNI_FALSE;
+    if (jvmti->IsModifiableClass(okClass, &modifiable) == JVMTI_ERROR_NONE && modifiable) {
+        if (auto err = jvmti->RetransformClasses(1, &okClass); err != JVMTI_ERROR_NONE) {
+            LOGE("RetransformClasses(okhttp3.OkHttpClient) failed: %d", err);
         } else {
-            env->CallStaticVoidMethod(gBootstrapClassRef, selfDestructMid, gAppLoaderGlobalRef);
-            if (env->ExceptionCheck()) {
-                DescribePendingException(env, "Bootstrap.enableSelfDestructMode");
-                LOGW("self-destruct mode enable failed (running in persistent mode)");
-            } else {
-                LOGI("self-destruct mode enabled on FileRulesProvider");
-            }
+            LOGI("retransformed okhttp3.OkHttpClient");
         }
+    } else {
+        LOGW("okhttp3.OkHttpClient is not modifiable; interceptor injection skipped");
     }
 
-    // 5) Heap-walk existing OkHttpClient instances.
-    if (!ModifyExistingOkHttpClients(env, jvmti, appLoader)) {
-        LOGE("ModifyExistingOkHttpClients failed");
-        return JNI_ERR;
-    }
-
-    // 6) Hook new build() calls. Armed only if the capabilities were granted.
-    //    Failure isn't fatal — we degrade to existing-only mode.
-    if (hookable) {
-        if (!SetupBuilderBuildHook(env, jvmti, appLoader)) {
-            LOGW("Builder.build() hook setup failed; running in existing-only mode");
-        }
-    }
-
-    LOGI("forja JVMTI agent attached (dex=%s, new-client hook=%s)",
-         dexPath.c_str(), hookable ? "ARMED" : "OFF");
+    LOGI("forja JVMTI agent attached (dex=%s, retransform=DONE)", dexPath.c_str());
     return JNI_OK;
 }
 

@@ -43,7 +43,7 @@ appId: com.tkhskt.forja.sample
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 418.*"
-    timeout: 15000
+    timeout: 30000
 - assertVisible:
     text: ".*rewritten.*"
 `)
@@ -197,7 +197,7 @@ appId: com.tkhskt.forja.sample
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 200.*"
-    timeout: 15000
+    timeout: 30000
 - assertVisible:
     text: ".*application/x-forja-test.*"
 - assertVisible:
@@ -241,7 +241,7 @@ appId: com.tkhskt.forja.sample
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 204.*"
-    timeout: 15000
+    timeout: 30000
 `)
 	waitForLogcat(t, "(0 bytes)", 10*time.Second, "SampleApp")
 	// The yml on disk must hold body as an explicit empty string, not omitted
@@ -282,7 +282,7 @@ appId: com.tkhskt.forja.sample
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 418.*"
-    timeout: 15000
+    timeout: 30000
 - assertVisible:
     text: ".*forja-e2e.*"
 `

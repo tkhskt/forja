@@ -24,6 +24,16 @@ OpenJDK jvmti.h
                  with independent modules under terms of the linker's choice.
     Reference:   https://openjdk.org/legal/gplv2+ce.html
 
+slicer (AOSP dexter)
+    Files:       jvmti-agent/src/main/cpp/slicer/** (sources + export/slicer/*.h)
+    Copyright:   (c) The Android Open Source Project.
+    License:     Apache License, Version 2.0 (LICENSE / NOTICE retained under
+                 jvmti-agent/src/main/cpp/slicer/).
+    Use:         Compiled into libforja-agent-<abi>.so. Rewrites the dex
+                 bytecode of okhttp3.OkHttpClient.interceptors() to inject the
+                 RulesInterceptor via an exit hook.
+    Reference:   https://android.googlesource.com/platform/tools/dexter/+/refs/heads/main/slicer
+
 ================================================================
 2. Components linked into the `forja` Go binary
 ================================================================

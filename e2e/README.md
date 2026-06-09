@@ -16,7 +16,13 @@ behaves when multiple debuggable apps coexist.
 - `$ANDROID_HOME` / `$ANDROID_SDK_ROOT` (auto-detected from
   `~/Library/Android/sdk` on macOS and `~/Android/Sdk` on Linux when unset)
 - `avdmanager` / `sdkmanager` from either `cmdline-tools/latest/bin/` or the
-  `tools/bin/` location
+  `tools/bin/` location. **On JDK 11+ you need the `cmdline-tools;latest`
+  package** — the legacy `tools/bin` ones depend on JAXB (`javax.xml.bind`),
+  removed from the JDK in 11 (JEP 320), and crash with `NoClassDefFoundError`.
+  Install "Android SDK Command-line Tools (latest)" from Android Studio's SDK
+  Manager, or run with `JAVA_HOME` pointed at a JDK 8. (Only needed when the
+  suite has to create/boot an AVD — borrowing an already-running emulator skips
+  these tools entirely.)
 - `adb` (used from PATH if available, otherwise falls back to
   `$ANDROID_HOME/platform-tools/adb`)
 - [Maestro](https://maestro.mobile.dev) (`curl -Ls "https://get.maestro.mobile.dev" | bash`)
@@ -54,6 +60,40 @@ FORJA_E2E_TAG=google_apis_playstore \
 # Run a single test
 ./e2e/scripts/run.sh -run TestCoreBasicRewrite
 ```
+
+### Across multiple API levels (matrix)
+
+`run.sh` exercises one API level per invocation. To verify forja on older ART
+versions too — the attach + dex-instrumentation path can differ across
+releases — use the matrix runner:
+
+```bash
+# Default matrix: API 28 (minSdk floor) + the highest installed system image
+./e2e/scripts/run_matrix.sh
+
+# Explicit set of API levels
+FORJA_E2E_MATRIX_APIS="28 31 34" ./e2e/scripts/run_matrix.sh
+
+# Forwards args to go test, same as run.sh
+./e2e/scripts/run_matrix.sh -run TestCore
+```
+
+It boots a **dedicated, owned** emulator per API (named `forja-e2e-api<level>`),
+runs the full suite, and tears it down before the next one — so only one device
+is connected at a time and the suite's bare `adb` calls stay unambiguous. Notes:
+
+- **Clean slate required.** Because it boots its own emulators, no other
+  device/emulator may be connected when it starts (it errors out otherwise).
+  Set `FORJA_E2E_MATRIX_FORCE=1` only if you've exported `ANDROID_SERIAL`
+  yourself.
+- **Missing images are auto-installed.** If the API 28 system image isn't
+  present, `setup_emulator.sh` pulls it via `sdkmanager` (slow, needs network)
+  on first use.
+- **Cost.** Each API is a cold boot (~3–5 min) plus a full suite (~9 min), so a
+  two-API matrix is ~25–30 min. `FORJA_E2E_KEEP` is ignored here (each
+  emulator must be torn down between APIs).
+- Exit status is non-zero if **any** API fails; a per-API PASS/FAIL summary is
+  printed at the end.
 
 ### Why not just `go test`?
 

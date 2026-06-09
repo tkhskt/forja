@@ -62,7 +62,7 @@ appId: com.tkhskt.forja.sample
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 503.*"
-    timeout: 15000
+    timeout: 30000
 `)
 }
 
@@ -165,7 +165,7 @@ appId: com.tkhskt.forja.sample
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 503.*"
-    timeout: 15000
+    timeout: 30000
 `)
 }
 
@@ -267,7 +267,7 @@ appId: com.tkhskt.forja.sample
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 503.*"
-    timeout: 15000
+    timeout: 30000
 `)
 }
 
@@ -318,7 +318,7 @@ appId: com.tkhskt.forja.sample
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 418.*"
-    timeout: 15000
+    timeout: 30000
 - assertVisible:
     text: ".*manual-yml.*"
 `)
@@ -425,7 +425,7 @@ appId: com.tkhskt.forja.sample
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 418.*"
-    timeout: 15000
+    timeout: 30000
 - assertVisible:
     text: ".*before.*"
 `)
@@ -456,7 +456,7 @@ appId: com.tkhskt.forja.sample
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 418.*"
-    timeout: 15000
+    timeout: 30000
 - assertVisible:
     text: ".*after.*"
 `)
@@ -491,7 +491,7 @@ func TestSyncCommandPkgFilterOnlyAffectsTarget(t *testing.T) {
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 418.*"
-    timeout: 15000
+    timeout: 30000
 - assertVisible:
     text: ".*before.*"
 `)
@@ -522,7 +522,7 @@ appId: com.tkhskt.forja.sample
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 418.*"
-    timeout: 15000
+    timeout: 30000
 - assertVisible:
     text: ".*after.*"
 `)
@@ -537,7 +537,7 @@ appId: com.tkhskt.forja.sample.staging
 - extendedWaitUntil:
     visible:
       text: ".*HTTP 418.*"
-    timeout: 15000
+    timeout: 30000
 - assertVisible:
     text: ".*before.*"
 `)
