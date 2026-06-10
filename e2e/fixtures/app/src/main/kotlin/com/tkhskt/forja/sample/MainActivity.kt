@@ -14,10 +14,12 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-// example.com is an IANA-reserved domain with extremely stable responses
-// (httpbin.org occasionally turns slow, so we avoid it here). forja rewrites
-// the response anyway, so the original being HTML vs JSON doesn't matter.
-private const val URL = "https://example.com/"
+// The e2e harness runs an in-process mock server and bridges it to the device
+// with `adb reverse tcp:8080`, so this fixed loopback URL hits a deterministic
+// baseline (HTTP 200) with no external network dependency — fast and
+// reproducible. forja rewrites the response anyway, so the baseline shape
+// doesn't matter. (Cleartext to 127.0.0.1 is allowed via usesCleartextTraffic.)
+private const val URL = "http://127.0.0.1:8080/"
 private const val TAG = "SampleApp"
 
 /**
@@ -25,15 +27,14 @@ private const val TAG = "SampleApp"
  *
  * Two buttons exercise two separate paths:
  *
- *  - **A: fetch_singleton**:
- *      Uses `Http.client` (the singleton built in Application.onCreate).
- *      → Verifies that agent.cpp's `IterateOverInstancesOfClass` path
- *        actually rewrote the already-built instance.
+ *  - **A: fetch_singleton**: uses `Http.client`, the singleton built in
+ *      Application.onCreate (i.e. before the agent attached).
+ *  - **B: fetch_new**: builds a fresh `OkHttpClient.Builder().build()` per
+ *      click (i.e. after attach).
  *
- *  - **B: fetch_new**:
- *      Builds a fresh `OkHttpClient.Builder().build()` per click.
- *      → Verifies that agent.cpp's Breakpoint + per-thread MethodExit
- *        catches build() calls made after attach.
+ * Both exercise the same hook: agent.cpp instruments
+ * `OkHttpClient.interceptors()` via RetransformClasses, and OkHttp reads it
+ * per request, so existing and new clients alike get the RulesInterceptor.
  *
  * Both buttons hit the same endpoint and expect the same outcome. With a
  * forja rule pushed, end-to-end success means both buttons return the

@@ -23,7 +23,7 @@ func TestOkHttp5BasicRewrite(t *testing.T) {
 	clearLogcat(t)
 
 	runForja(t, "rules", "add", "ok5-mock",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 		"--body", `{"by":"forja-ok5"}`,
 	)
@@ -74,7 +74,7 @@ func TestOkHttp5OffRestoresOriginalResponse(t *testing.T) {
 	startMainActivity(t, AppOk5Dev)
 
 	runForja(t, "rules", "add", "ok5-off",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 	)
 	runForja(t, "apply", "--app", AppOk5Dev, "--enable", "ok5-off")

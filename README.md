@@ -102,4 +102,9 @@ Rules are **session-scoped on the device**: kill the app and the rewrites disapp
 
 Distributed under the [Apache License 2.0](./LICENSE).
 
-The only file with a different upstream is `jvmti-agent/src/main/cpp/jvmti.h`, which comes from OpenJDK under GPLv2 + the Classpath Exception. The Classpath Exception explicitly permits linking that file with code under any other license, so consumers of forja are not bound by GPLv2. See [`NOTICE`](./NOTICE) for details.
+Two third-party components are vendored under `jvmti-agent/src/main/cpp/`:
+
+- **`slicer/`** — the dex bytecode rewriter from AOSP's [`tools/dexter`](https://android.googlesource.com/platform/tools/dexter), under the **Apache License 2.0** (the same license as forja). It's compiled into `libforja-agent.so` and used to instrument `okhttp3.OkHttpClient.interceptors()`.
+- **`jvmti.h`** — from OpenJDK under **GPLv2 + the Classpath Exception**. The Classpath Exception explicitly permits linking that file with code under any other license, so consumers of forja are not bound by GPLv2.
+
+See [`NOTICE`](./NOTICE) for the full third-party inventory.

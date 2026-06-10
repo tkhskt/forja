@@ -17,6 +17,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -374,6 +376,64 @@ func readRulesYml(t *testing.T, name string) string {
 	return string(data)
 }
 
+// --- local mock server (replaces the external network in fixtures) -------
+
+// mockDevicePort is the fixed device-side loopback port the fixture app
+// fetches (http://127.0.0.1:8080/). `adb reverse` bridges it to the
+// in-process mock server below, so tests never depend on an external host
+// like example.com — responses are instant and deterministic.
+const mockDevicePort = 8080
+
+var mockServer *http.Server
+
+// startMockServer brings up an in-process HTTP server on a free host port and
+// returns that port. The baseline response is a deterministic HTTP 200 that
+// the "off"/no-rewrite tests assert on; rewrite tests replace it via a forja
+// rule matching host 127.0.0.1.
+func startMockServer() (int, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "forja-mock-baseline\n")
+	})
+	mockServer = &http.Server{Handler: mux}
+	go func() { _ = mockServer.Serve(ln) }()
+	port := ln.Addr().(*net.TCPAddr).Port
+	fmt.Fprintf(os.Stderr, "[e2e] mock server listening on 127.0.0.1:%d\n", port)
+	return port, nil
+}
+
+func stopMockServer() {
+	if mockServer == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = mockServer.Shutdown(ctx)
+}
+
+// setupAdbReverse maps the device's tcp:mockDevicePort to the host's mock
+// server port, so the fixture's http://127.0.0.1:<mockDevicePort>/ reaches it.
+func setupAdbReverse(hostPort int) error {
+	dev := fmt.Sprintf("tcp:%d", mockDevicePort)
+	_ = exec.Command("adb", "reverse", "--remove", dev).Run() // clear any stale mapping
+	out, err := exec.Command("adb", "reverse", dev, fmt.Sprintf("tcp:%d", hostPort)).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("adb reverse %s: %w\n%s", dev, err, out)
+	}
+	fmt.Fprintf(os.Stderr, "[e2e] adb reverse %s -> host tcp:%d\n", dev, hostPort)
+	return nil
+}
+
+func teardownAdbReverse() {
+	_ = exec.Command("adb", "reverse", "--remove", fmt.Sprintf("tcp:%d", mockDevicePort)).Run()
+}
+
 // --- TestMain ----------------------------------------------------------
 
 var teardownOnce sync.Once
@@ -403,31 +463,47 @@ func TestMain(m *testing.M) {
 		os.Exit(2)
 	}
 
-	// Always tear down even if a test panics. The teardown script no-ops on
-	// borrowed devices.
-	defer teardownOnce.Do(func() {
+	// 3.5) Start the in-process mock HTTP server and bridge it to the device
+	// with `adb reverse`, so the fixture's http://127.0.0.1:8080/ hits a
+	// deterministic baseline (HTTP 200) instead of an external host. Must run
+	// after the device is up (adb reverse needs it) and before fixture interaction.
+	mockPort, err := startMockServer()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "start mock server: %v\n", err)
+		_ = teardownEmulator()
+		os.Exit(2)
+	}
+	if err := setupAdbReverse(mockPort); err != nil {
+		fmt.Fprintf(os.Stderr, "adb reverse: %v\n", err)
+		stopMockServer()
+		_ = teardownEmulator()
+		os.Exit(2)
+	}
+
+	// Single teardown used everywhere (panic, install failure, normal exit).
+	// teardownOnce guarantees it runs at most once.
+	cleanup := func() {
 		if os.Getenv("FORJA_E2E_KEEP") != "" {
 			fmt.Fprintln(os.Stderr, "[e2e] FORJA_E2E_KEEP set, leaving emulator running")
 			return
 		}
+		teardownAdbReverse()
+		stopMockServer()
 		_ = teardownEmulator()
-	})
+	}
+
+	// Always tear down even if a test panics.
+	defer teardownOnce.Do(cleanup)
 
 	// 4) Install both flavors of the fixture app.
 	if err := installSampleApps(); err != nil {
 		fmt.Fprintf(os.Stderr, "install fixture app: %v\n", err)
-		teardownOnce.Do(func() { _ = teardownEmulator() })
+		teardownOnce.Do(cleanup)
 		os.Exit(2)
 	}
 
 	code := m.Run()
-	teardownOnce.Do(func() {
-		if os.Getenv("FORJA_E2E_KEEP") != "" {
-			fmt.Fprintln(os.Stderr, "[e2e] FORJA_E2E_KEEP set, leaving emulator running")
-			return
-		}
-		_ = teardownEmulator()
-	})
+	teardownOnce.Do(cleanup)
 	os.Exit(code)
 }
 

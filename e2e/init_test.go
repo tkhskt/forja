@@ -85,7 +85,7 @@ func TestInitRequiredBeforeOtherCommands(t *testing.T) {
 	_ = os.RemoveAll(filepath.Join(repoRoot, "forja"))
 
 	cases := [][]string{
-		{"rules", "add", "x", "--host", "example.com", "--status", "418"},
+		{"rules", "add", "x", "--host", "127.0.0.1", "--status", "418"},
 		{"rules", "update", "x", "--status", "503"},
 		{"rules", "remove", "x"},
 		{"rules", "list"},
@@ -122,9 +122,9 @@ func TestRulesListSmoke(t *testing.T) {
 
 	// Two rules in different scopes so both sections render.
 	runForja(t, "rules", "add", "project-rule",
-		"--host", "example.com", "--status", "418")
+		"--host", "127.0.0.1", "--status", "418")
 	runForja(t, "rules", "add", "local-rule", "--local",
-		"--host", "example.com", "--status", "503")
+		"--host", "127.0.0.1", "--status", "503")
 
 	// Without --app: just catalog. Each scope section must appear with its
 	// rule, project rules MUST NOT be prefixed with the device toggle [..].

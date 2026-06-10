@@ -26,7 +26,7 @@ func TestSyncAfterAddImmediatelyEffective(t *testing.T) {
 	clearLogcat(t)
 
 	runForja(t, "rules", "add", "immediate",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
@@ -43,7 +43,7 @@ func TestSyncUpdatePatchAppliesToDevice(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "iter",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 	)
 	runForja(t, "apply", "--app", AppDev, "--enable", "iter")
@@ -74,7 +74,7 @@ func TestSyncRemoveDropsFromDevice(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "ephemeral",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 	)
 	runForja(t, "apply", "--app", AppDev, "--enable", "ephemeral")
@@ -97,12 +97,12 @@ func TestSyncOffStatusDisablesAllInJSON(t *testing.T) {
 	// project catalog (rules.yml — the default), z is added with --local so
 	// the off command's "yml files must not be touched" assertion exercises
 	// both files. After this, status.json[AppDev].enabled = [x, y, z].
-	runForja(t, "rules", "add", "x", "--host", "example.com", "--status", "418")
+	runForja(t, "rules", "add", "x", "--host", "127.0.0.1", "--status", "418")
 	runForja(t, "apply", "--app", AppDev, "--enable", "x")
-	runForja(t, "rules", "add", "y", "--host", "example.com", "--path", "/x", "--status", "503")
+	runForja(t, "rules", "add", "y", "--host", "127.0.0.1", "--path", "/x", "--status", "503")
 	runForja(t, "apply", "--app", AppDev, "--enable", "y")
 	runForja(t, "rules", "add", "z", "--local",
-		"--host", "example.com", "--path", "/y", "--status", "401")
+		"--host", "127.0.0.1", "--path", "/y", "--status", "401")
 	runForja(t, "apply", "--app", AppDev, "--enable", "z")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 
@@ -133,7 +133,7 @@ func TestSyncProcessKillThenNewPushReAttaches(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "rk",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 	)
 	runForja(t, "apply", "--app", AppDev, "--enable", "rk")
@@ -177,7 +177,7 @@ func TestSyncNoOpUpdateIsIdempotent(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "noop",
-		"--host", "example.com", "--status", "418")
+		"--host", "127.0.0.1", "--status", "418")
 	runForja(t, "apply", "--app", AppDev, "--enable", "noop")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
 
@@ -205,11 +205,11 @@ func TestSyncProjectAndUserBothPushed(t *testing.T) {
 	// an `apply --enable` it's a pure catalog entry, not yet pushed to any
 	// device.
 	runForja(t, "rules", "add", "team-rule",
-		"--host", "team.example.com", "--status", "200")
+		"--host", "team.local", "--status", "200")
 	// user-rule lives in local yml (--local opt-in) so the test exercises
 	// project + local both being merged at push time.
 	runForja(t, "rules", "add", "user-rule", "--local",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
@@ -234,7 +234,7 @@ func TestSyncManualYmlEditTakesEffectOnNextCommand(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "hand-edit",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 	)
 	runForja(t, "apply", "--app", AppDev, "--enable", "hand-edit")
@@ -282,7 +282,7 @@ func TestSyncManualYmlAddNewRuleIsPicked(t *testing.T) {
 	// A stub rule on /unused — its only job is to bring up the agent. The
 	// hand-added rule on / is what should actually take effect.
 	runForja(t, "rules", "add", "stub",
-		"--host", "example.com", "--path", "/unused", "--status", "200",
+		"--host", "127.0.0.1", "--path", "/unused", "--status", "200",
 	)
 	runForja(t, "apply", "--app", AppDev, "--enable", "stub")
 	waitForLogcat(t, "forja JVMTI agent attached", 30*time.Second, "ForjaAgent")
@@ -296,7 +296,7 @@ func TestSyncManualYmlAddNewRuleIsPicked(t *testing.T) {
 	}
 	appended := string(raw) + `  - name: hand-added
     match:
-      host: example.com
+      host: 127.0.0.1
       path: /
     response:
       status: 418
@@ -332,7 +332,7 @@ func TestSyncManualYmlRemoveRuleDropsFromDevice(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "doomed",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 	)
 	runForja(t, "apply", "--app", AppDev, "--enable", "doomed")
@@ -341,7 +341,7 @@ func TestSyncManualYmlRemoveRuleDropsFromDevice(t *testing.T) {
 	// on AppDev, keep would be yml-only and update wouldn't auto-propagate
 	// anywhere.
 	runForja(t, "rules", "add", "keep",
-		"--host", "example.com", "--path", "/unused",
+		"--host", "127.0.0.1", "--path", "/unused",
 		"--status", "200",
 	)
 	runForja(t, "apply", "--app", AppDev, "--enable", "keep")
@@ -382,7 +382,7 @@ func TestSyncOffPushesEmptyArray(t *testing.T) {
 	clearLogcat(t)
 
 	runForja(t, "rules", "add", "before-off",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 	)
 	runForja(t, "apply", "--app", AppDev, "--enable", "before-off")
@@ -411,7 +411,7 @@ func TestSyncCommandReflectsManualBodyEdit(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "synced-body",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 		"--body", `{"before":"sync"}`,
 	)
@@ -474,7 +474,7 @@ func TestSyncCommandPkgFilterOnlyAffectsTarget(t *testing.T) {
 
 	// Enable a single rule on both apps with the same starting body.
 	runForja(t, "rules", "add", "filter-rule",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 		"--body", `{"phase":"before"}`,
 	)
@@ -549,7 +549,7 @@ func TestSyncCommandRejectsUnknownPkg(t *testing.T) {
 	resetForjaState(t, AppDev)
 
 	// Seed status.json with a different app so the file isn't empty.
-	runForja(t, "rules", "add", "stub", "--host", "example.com", "--path", "/foo", "--status", "418")
+	runForja(t, "rules", "add", "stub", "--host", "127.0.0.1", "--path", "/foo", "--status", "418")
 	runForja(t, "apply", "--app", AppDev, "--enable", "stub")
 
 	out, err := runForjaAllowingFailure(t, "sync", "--app", "com.no.such.pkg")

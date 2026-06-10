@@ -23,7 +23,7 @@ func TestCoreBasicRewrite(t *testing.T) {
 	clearLogcat(t)
 
 	runForja(t, "rules", "add", "mock-teapot",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
@@ -58,7 +58,7 @@ func TestCoreSelfDestruct(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "x",
-		"--host", "example.com", "--status", "418",
+		"--host", "127.0.0.1", "--status", "418",
 	)
 	runForja(t, "apply", "--app", AppDev, "--enable", "x")
 	waitForLogcat(t, "self-destruct mode enabled", 30*time.Second, "ForjaAgent")
@@ -91,7 +91,7 @@ func TestCoreProcessKillClearsRules(t *testing.T) {
 	startMainActivity(t, AppDev)
 
 	runForja(t, "rules", "add", "kill-test",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
@@ -106,8 +106,8 @@ func TestCoreProcessKillClearsRules(t *testing.T) {
 	startMainActivity(t, AppDev)
 	clearLogcat(t)
 
-	// Verify the response is back to baseline (200). The HTTP call to
-	// example.com returns 200 OK with a simple HTML page.
+	// Verify the response is back to baseline (200). The mock server returns
+	// 200 OK by default (no rule active = no rewrite).
 	maestroFlow(t, "tap_singleton_assert_200.yaml")
 
 	// And rules.json is not on the device (agent is dead, never re-attached).
@@ -126,13 +126,13 @@ func TestCoreOff(t *testing.T) {
 	// Both rules added with --app so they're enabled on AppDev via the sugar
 	// path (yml + status.enable + push).
 	runForja(t, "rules", "add", "a",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
 	runForja(t, "apply", "--app", AppDev, "--enable", "a")
 	runForja(t, "rules", "add", "b",
-		"--host", "example.com", "--path", "/other",
+		"--host", "127.0.0.1", "--path", "/other",
 		"--status", "503",
 	)
 	runForja(t, "apply", "--app", AppDev, "--enable", "b")
@@ -168,7 +168,7 @@ func TestCoreOff(t *testing.T) {
 //  2. the runtime uses Content-Type to wrap the body in the right MIME type
 //
 // We use a deliberately unique custom Content-Type value so the assertion
-// can't accidentally match the upstream example.com response.
+// can't accidentally match the mock baseline response.
 func TestCoreHeadersRewrite(t *testing.T) {
 	resetForjaState(t, AppDev)
 	forceStop(t, AppDev)
@@ -176,7 +176,7 @@ func TestCoreHeadersRewrite(t *testing.T) {
 	clearLogcat(t)
 
 	runForja(t, "rules", "add", "headers-rewrite",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "200",
 		"--body", "marker-body-text",
 		"--header", "Content-Type=application/x-forja-test",
@@ -208,13 +208,13 @@ appId: com.tkhskt.forja.sample
 }
 
 // TestCoreExplicitEmptyBody — --body '' forces the response body to be empty,
-// distinct from omitting --body (which would leave the original example.com
-// HTML body intact). We can't easily assertNotVisible "the absence of HTML",
-// so we rely on the sample app's logcat line that prints byte count:
+// distinct from omitting --body (which would leave the mock baseline body
+// intact). We can't easily assertNotVisible "the absence of a body", so we
+// rely on the sample app's logcat line that prints byte count:
 //
 //	[singleton] HTTP 204 (0 bytes)
 //
-// Seeing `(0 bytes)` while the upstream normally returns ~1.2KB of HTML is
+// Seeing `(0 bytes)` while the mock baseline returns a non-empty body is
 // unambiguous evidence the runtime replaced the body with an empty one.
 func TestCoreExplicitEmptyBody(t *testing.T) {
 	resetForjaState(t, AppDev)
@@ -223,7 +223,7 @@ func TestCoreExplicitEmptyBody(t *testing.T) {
 	clearLogcat(t)
 
 	runForja(t, "rules", "add", "empty-body",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "204",
 		"--body", "",
 	)
@@ -265,7 +265,7 @@ func TestCoreBodyFile(t *testing.T) {
 	mkForjaResponsesDir(t, "teapot_response.json")
 
 	runForja(t, "rules", "add", "bodyfile-rule",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 		"--body-file", "responses/teapot_response.json",
 	)

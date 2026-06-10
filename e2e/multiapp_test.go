@@ -55,7 +55,7 @@ func TestMultiAppAttachIsolated(t *testing.T) {
 
 	// Add a rule targeting only dev.
 	runForja(t, "rules", "add", "dev-only",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
@@ -97,7 +97,7 @@ func TestMultiAppOffOnlyAffectsTarget(t *testing.T) {
 
 	// Attach to dev.
 	runForja(t, "rules", "add", "dev-rule",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
@@ -142,7 +142,7 @@ func TestMultiAppSharedRuleAppliesToBothFlavors(t *testing.T) {
 
 	// Define the rule once in yml (no --app → catalog-only).
 	runForja(t, "rules", "add", "shared",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 		"--body", `{"by":"shared-rule"}`,
 	)
@@ -219,7 +219,7 @@ func TestMultiAppUpdatePropagatesToAllEnabledPkgs(t *testing.T) {
 	startMainActivity(t, AppStaging)
 
 	runForja(t, "rules", "add", "shared",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 	)
 	runForja(t, "apply", "--app", AppDev, "--enable", "shared")
@@ -279,7 +279,7 @@ func TestMultiAppAttachBothSequentially(t *testing.T) {
 
 	// 1) Attach to dev.
 	runForja(t, "rules", "add", "dev-x",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "418",
 		"--body", `{"rewritten":true}`,
 	)
@@ -294,7 +294,7 @@ func TestMultiAppAttachBothSequentially(t *testing.T) {
 	// targeted at staging.
 	clearLogcat(t)
 	runForja(t, "rules", "add", "staging-y",
-		"--host", "example.com", "--path", "/",
+		"--host", "127.0.0.1", "--path", "/",
 		"--status", "503",
 	)
 	runForja(t, "apply", "--app", AppStaging, "--enable", "staging-y")
