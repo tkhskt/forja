@@ -157,7 +157,7 @@ func (m RulesModel) View() string {
 			status = fmt.Sprintf("%d", r.Response.Status)
 		}
 		line := fmt.Sprintf("  %s %-30s host=%-24s path=%-20s → %s%s",
-			mark, truncate(r.Name, 30), truncate(host, 24), truncate(path, 20), status,
+			mark, truncate(r.DisplayHandle(), 30), truncate(host, 24), truncate(path, 20), status,
 			responseExtras(r.Rule))
 		switch {
 		case i == m.cursor:

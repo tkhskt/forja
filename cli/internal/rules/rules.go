@@ -14,7 +14,9 @@ package rules
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/tkhskt/forja/internal/config"
@@ -50,10 +52,11 @@ func (s Scope) String() string {
 // Paths bundles the on-disk locations we read/write. Tests can construct a
 // Paths over t.TempDir() to avoid touching the real cwd.
 type Paths struct {
-	Project string // forja/rules.yml
-	Local   string // forja/rules.local.yml
+	Project string // forja/rules.yml (the root project file + add() default target)
+	Local   string // forja/rules.local.yml (the root local file)
 	Status  string // forja/status.json
 	Aliases string // forja/aliases.local.yml
+	Dir     string // forja/ root — recursively discovered for rules.yml / rules.local.yml
 }
 
 // DefaultPaths returns the paths relative to cwd (forja/rules.yml etc.).
@@ -63,6 +66,7 @@ func DefaultPaths() Paths {
 		Local:   config.DefaultLocalPath,
 		Status:  config.DefaultStatusPath,
 		Aliases: config.DefaultAliasesPath,
+		Dir:     config.DefaultDir,
 	}
 }
 
@@ -119,6 +123,10 @@ type AddOptions struct {
 	Body     *config.BodyValue
 	BodyFile string
 	Headers  map[string]string
+	// Dir, when non-empty, writes the rule into forja/<Dir>/rules.yml (a
+	// shareable bundle directory, created if absent) instead of the root
+	// forja/rules.yml. Must stay inside forja/.
+	Dir string
 }
 
 // ValidateRuleName rejects names that would clash with forja's CLI surface
@@ -139,6 +147,9 @@ func ValidateRuleName(name string) error {
 	if strings.ContainsRune(name, ',') {
 		return errors.New("rule name cannot contain ',' (the comma is used as a separator by --enable/--disable)")
 	}
+	if strings.ContainsRune(name, '/') {
+		return errors.New("rule name cannot contain '/' (it's the bundle/name handle separator)")
+	}
 	for _, r := range name {
 		if r < 0x20 || r == 0x7F {
 			return fmt.Errorf("rule name cannot contain control characters (found U+%04X)", r)
@@ -158,27 +169,28 @@ func Add(paths Paths, scope Scope, opts AddOptions) error {
 	if opts.Body != nil && opts.BodyFile != "" {
 		return errors.New("body and bodyFile are mutually exclusive")
 	}
-	// Verify the name is unique across BOTH scopes — also surfaces any
-	// pre-existing same-file duplicate or cross-scope duplicate before we
-	// touch disk.
-	project, local, err := loadBothScopes(paths)
+	// The new rule's fully-qualified handle must be unique. The same bare name
+	// in a *different* bundle is fine (that's the point of bundles); only a
+	// same-bundle/same-name collision is rejected. index() also surfaces any
+	// pre-existing handle collision before we touch disk.
+	refs, err := index(paths)
 	if err != nil {
 		return err
 	}
-	if project != nil && project.FindRule(opts.Name) != nil {
-		return fmt.Errorf("rule %q already exists in project scope", opts.Name)
-	}
-	if local != nil && local.FindRule(opts.Name) != nil {
-		return fmt.Errorf("rule %q already exists in local scope", opts.Name)
+	newHandle := handleFor(relForDir(opts.Dir), opts.Name)
+	for _, r := range refs {
+		if r.handle == newHandle {
+			return fmt.Errorf("rule %q already exists at %s", opts.Name, newHandle)
+		}
 	}
 
-	path := paths.pathFor(scope)
-	var rf *config.RulesFile
-	switch scope {
-	case ScopeProject:
-		rf = project
-	case ScopeLocal:
-		rf = local
+	path, err := addTargetPath(paths, scope, opts.Dir)
+	if err != nil {
+		return err
+	}
+	rf, err := config.Load(path)
+	if err != nil {
+		return err
 	}
 	if rf == nil {
 		rf = &config.RulesFile{}
@@ -203,54 +215,151 @@ func Add(paths Paths, scope Scope, opts AddOptions) error {
 	return config.Save(path, rf)
 }
 
-// loadBothScopes loads project + local rules together and verifies their
-// name sets are disjoint. Rule names are required to be unique across the
-// two scopes — the override / shadow pattern that v0.1.0 supported was
-// removed because it made status.json's name-keyed enabled list ambiguous
-// (one name could refer to two rules in two files). Callers can build the
-// "rename + disable + enable" workflow on top of this stricter contract
-// when they really want a personal alternative to a project rule.
-//
-// Returns (project, local, error). Either file may be nil if absent.
-// Load errors from either file are propagated as-is.
-func loadBothScopes(paths Paths) (*config.RulesFile, *config.RulesFile, error) {
-	project, err := config.Load(paths.Project)
-	if err != nil {
-		return nil, nil, err
+// forjaDir returns the forja/ root used for recursive discovery. Falls back to
+// the directory of the root Project file so tests (which set only Project over
+// a TempDir) keep working without setting Dir explicitly.
+func (p Paths) forjaDir() string {
+	if p.Dir != "" {
+		return p.Dir
 	}
-	local, err := config.Load(paths.Local)
+	return filepath.Dir(p.Project)
+}
+
+// discover walks forja/ for every rules.yml (project) / rules.local.yml (local)
+// and returns them in deterministic, first-match order. The same bare name may
+// repeat across different bundles, but each rule's fully-qualified handle
+// (bundle path + name) must be unique. A handle collision — e.g. the same name
+// in a single bundle's rules.yml and rules.local.yml — is reported with both
+// declaring files.
+func discover(paths Paths) ([]config.RuleSource, error) {
+	sources, err := config.DiscoverRuleFiles(paths.forjaDir())
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	if project != nil && local != nil {
-		projectNames := make(map[string]bool, len(project.Rules))
-		for _, r := range project.Rules {
-			projectNames[r.Name] = true
+	owner := map[string]string{} // handle -> declaring file path
+	for _, src := range sources {
+		for _, r := range src.File.Rules {
+			h := handleFor(src.Rel, r.Name)
+			if prev, ok := owner[h]; ok {
+				return nil, fmt.Errorf("two rules resolve to the same handle %q (in %s and %s) — rename one", h, prev, src.Path)
+			}
+			owner[h] = src.Path
 		}
-		for _, r := range local.Rules {
-			if projectNames[r.Name] {
-				return nil, nil, fmt.Errorf("rule %q exists in both rules.yml and rules.local.yml — rule names must be unique across both scopes (rename one of them, or remove the duplicate)", r.Name)
+	}
+	return sources, nil
+}
+
+// addTargetPath resolves which yml file `rules add` writes to: the root file
+// for the scope by default, or forja/<dir>/{rules.yml|rules.local.yml} when a
+// bundle directory is requested. The bundle dir is created if absent and must
+// stay inside forja/.
+func addTargetPath(paths Paths, scope Scope, dir string) (string, error) {
+	name := config.RuleFileName
+	if scope == ScopeLocal {
+		name = config.RuleLocalFileName
+	}
+	if dir == "" {
+		return paths.pathFor(scope), nil
+	}
+	clean := filepath.Clean(dir)
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("--dir must be a path inside forja/ (got %q)", dir)
+	}
+	targetDir := filepath.Join(paths.forjaDir(), clean)
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return "", fmt.Errorf("create bundle dir %s: %w", targetDir, err)
+	}
+	return filepath.Join(targetDir, name), nil
+}
+
+// handleFor builds a rule's fully-qualified handle: the bundle path (the rule
+// file's directory relative to forja/, slash-separated) plus the name. Rules in
+// the root rules.yml / rules.local.yml have an empty bundle, so their handle is
+// just the name — which keeps pre-bundle status.json entries valid without any
+// migration.
+func handleFor(rel, name string) string {
+	if rel == "" {
+		return name
+	}
+	return rel + "/" + name
+}
+
+// relForDir mirrors the Rel that discovery assigns to a rule file written into
+// the given --dir bundle ("" for the root).
+func relForDir(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Clean(dir))
+}
+
+// ruleRef is one discovered rule's addressing info.
+type ruleRef struct {
+	handle string
+	name   string
+	path   string // declaring file
+	scope  string
+}
+
+// index returns every discovered rule with its handle. discover() already
+// guarantees handle uniqueness, so handles form a unique key here.
+func index(paths Paths) ([]ruleRef, error) {
+	sources, err := discover(paths)
+	if err != nil {
+		return nil, err
+	}
+	var refs []ruleRef
+	for _, src := range sources {
+		for _, r := range src.File.Rules {
+			refs = append(refs, ruleRef{
+				handle: handleFor(src.Rel, r.Name),
+				name:   r.Name,
+				path:   src.Path,
+				scope:  src.Scope,
+			})
+		}
+	}
+	return refs, nil
+}
+
+// resolveToken maps a user-supplied token to exactly one rule. A full-handle
+// match wins; otherwise a bare name is accepted when it is unique across all
+// files. An ambiguous bare name errors with the qualified candidates so the
+// user can re-run with one. A non-nil scope restricts the search.
+func resolveToken(refs []ruleRef, token string, scope *Scope) (ruleRef, error) {
+	pool := refs
+	if scope != nil {
+		pool = nil
+		for _, r := range refs {
+			if r.scope == scope.String() {
+				pool = append(pool, r)
 			}
 		}
 	}
-	return project, local, nil
-}
-
-// findRule looks the named rule up across both scopes. Cross-scope name
-// duplicates are forbidden (loadBothScopes rejects them), so the lookup is
-// unambiguous: at most one of the two scopes contains the name.
-func findRule(paths Paths, name string) (Scope, error) {
-	project, local, err := loadBothScopes(paths)
-	if err != nil {
-		return ScopeProject, err
+	for _, r := range pool {
+		if r.handle == token {
+			return r, nil
+		}
 	}
-	if local != nil && local.FindRule(name) != nil {
-		return ScopeLocal, nil
+	var byName []ruleRef
+	for _, r := range pool {
+		if r.name == token {
+			byName = append(byName, r)
+		}
 	}
-	if project != nil && project.FindRule(name) != nil {
-		return ScopeProject, nil
+	switch len(byName) {
+	case 1:
+		return byName[0], nil
+	case 0:
+		return ruleRef{}, fmt.Errorf("rule %q not found", token)
+	default:
+		handles := make([]string, 0, len(byName))
+		for _, m := range byName {
+			handles = append(handles, m.handle)
+		}
+		sort.Strings(handles)
+		return ruleRef{}, fmt.Errorf("rule name %q is ambiguous — qualify it as one of: %s", token, strings.Join(handles, ", "))
 	}
-	return ScopeProject, fmt.Errorf("rule %q not found in either scope", name)
 }
 
 // Remove deletes a rule by name from yml AND drops every status.json entry
@@ -258,33 +367,30 @@ func findRule(paths Paths, name string) (Scope, error) {
 // only that yml is inspected; otherwise the rule is searched across both
 // (local-wins).
 func Remove(paths Paths, name string, scope *Scope) error {
-	var s Scope
-	if scope != nil {
-		s = *scope
-	} else {
-		found, err := findRule(paths, name)
-		if err != nil {
-			return err
-		}
-		s = found
+	refs, err := index(paths)
+	if err != nil {
+		return err
 	}
-	path := paths.pathFor(s)
-	rf, err := config.Load(path)
+	ref, err := resolveToken(refs, name, scope)
+	if err != nil {
+		return err
+	}
+	rf, err := config.Load(ref.path)
 	if err != nil {
 		return err
 	}
 	if rf == nil {
 		return ErrNoFile
 	}
-	if err := rf.RemoveRule(name); err != nil {
+	if err := rf.RemoveRule(ref.name); err != nil {
 		return err
 	}
-	if err := config.Save(path, rf); err != nil {
+	if err := config.Save(ref.path, rf); err != nil {
 		return err
 	}
 	st, _ := config.LoadStatus(paths.Status)
 	if st != nil {
-		st.DropRule(name)
+		st.DropRule(ref.handle)
 		_ = config.SaveStatus(paths.Status, st)
 	}
 	return nil
@@ -318,27 +424,24 @@ type UpdateOptions struct {
 // that want to propagate the new definition to live apps should consult
 // status.AppsEnabling(name) and push to each.
 func Update(paths Paths, name string, scope *Scope, opts UpdateOptions) error {
-	var s Scope
-	if scope != nil {
-		s = *scope
-	} else {
-		found, err := findRule(paths, name)
-		if err != nil {
-			return err
-		}
-		s = found
+	refs, err := index(paths)
+	if err != nil {
+		return err
 	}
-	path := paths.pathFor(s)
-	rf, err := config.Load(path)
+	ref, err := resolveToken(refs, name, scope)
+	if err != nil {
+		return err
+	}
+	rf, err := config.Load(ref.path)
 	if err != nil {
 		return err
 	}
 	if rf == nil {
 		return ErrNoFile
 	}
-	r := rf.FindRule(name)
+	r := rf.FindRule(ref.name)
 	if r == nil {
-		return fmt.Errorf("rule %q not found in %s scope", name, s)
+		return fmt.Errorf("rule %q not found", name)
 	}
 	if opts.Body != nil && opts.BodyFile != nil {
 		return errors.New("body and bodyFile are mutually exclusive on update")
@@ -367,11 +470,13 @@ func Update(paths Paths, name string, scope *Scope, opts UpdateOptions) error {
 			r.Response.Headers = *opts.Headers
 		}
 	}
-	return config.Save(path, rf)
+	return config.Save(ref.path, rf)
 }
 
-// Enable adds names to app's enabled list in status.json. Names that don't
-// exist in any yml scope are rejected so typos surface immediately.
+// Enable adds rules to app's enabled list in status.json, keyed by their
+// fully-qualified handle. Each token is resolved (full handle, or unique bare
+// name); an unknown name is rejected and an ambiguous bare name errors with
+// the qualified candidates so typos and collisions surface immediately.
 func Enable(paths Paths, app string, names []string) error {
 	if app == "" {
 		return errors.New("Enable requires a non-empty app")
@@ -379,27 +484,27 @@ func Enable(paths Paths, app string, names []string) error {
 	if len(names) == 0 {
 		return nil
 	}
-	known, err := loadKnownNames(paths)
+	refs, err := index(paths)
 	if err != nil {
 		return err
-	}
-	for _, n := range names {
-		if _, ok := known[n]; !ok {
-			return fmt.Errorf("rule %q not found in either scope", n)
-		}
 	}
 	st, err := config.LoadStatus(paths.Status)
 	if err != nil {
 		return err
 	}
 	for _, n := range names {
-		st.Enable(app, n)
+		ref, rerr := resolveToken(refs, n, nil)
+		if rerr != nil {
+			return rerr
+		}
+		st.Enable(app, ref.handle)
 	}
 	return config.SaveStatus(paths.Status, st)
 }
 
-// Disable removes names from app's enabled list. Unknown rule names are NOT
-// rejected (you should be able to forcibly clean up stale entries).
+// Disable removes rules from app's enabled list. Tokens are resolved to their
+// handle when possible; an unresolvable token is removed verbatim so stale
+// entries can always be cleaned up (unknown names are NOT rejected).
 func Disable(paths Paths, app string, names []string) error {
 	if app == "" {
 		return errors.New("Disable requires a non-empty app")
@@ -407,12 +512,17 @@ func Disable(paths Paths, app string, names []string) error {
 	if len(names) == 0 {
 		return nil
 	}
+	refs, _ := index(paths) // best-effort: still clean up even if discovery fails
 	st, err := config.LoadStatus(paths.Status)
 	if err != nil {
 		return err
 	}
 	for _, n := range names {
-		st.Disable(app, n)
+		key := n
+		if ref, rerr := resolveToken(refs, n, nil); rerr == nil {
+			key = ref.handle
+		}
+		st.Disable(app, key)
 	}
 	return config.SaveStatus(paths.Status, st)
 }
@@ -451,11 +561,11 @@ func SetEnabledForApp(paths Paths, app string, enabled []string) error {
 }
 
 // LoadEffective returns the merged effective rule list for app, ready to
-// push. EffectiveRule.Enabled reflects app's status.json enabled list
-// (absent = false). Cross-scope name duplicates are rejected by
-// loadBothScopes so the returned list always has unique names.
+// push. EffectiveRule.Enabled reflects app's status.json enabled list (keyed
+// by handle; absent = false). discover() rejects handle collisions so the
+// returned list always has unique handles.
 func LoadEffective(paths Paths, app string) ([]config.EffectiveRule, error) {
-	project, local, err := loadBothScopes(paths)
+	sources, err := discover(paths)
 	if err != nil {
 		return nil, err
 	}
@@ -463,34 +573,11 @@ func LoadEffective(paths Paths, app string) ([]config.EffectiveRule, error) {
 	if err != nil {
 		return nil, err
 	}
-	projectDir := filepath.Dir(paths.Project)
-	localDir := filepath.Dir(paths.Local)
-	return config.Effective(project, projectDir, local, localDir, st, app), nil
+	return config.EffectiveFromSources(sources, st, app), nil
 }
 
 // LoadStatus returns the current status (loading from disk). Convenience for
 // callers that want to walk AppsEnabling without re-implementing the io step.
 func LoadStatus(paths Paths) (config.Status, error) {
 	return config.LoadStatus(paths.Status)
-}
-
-// loadKnownNames returns the union of all rule names across project + local yml.
-// Used by Enable to typo-check before mutating status.json. Cross-scope
-// name uniqueness is enforced upstream by loadBothScopes, so the union
-// here is always a strict union (no shared names).
-func loadKnownNames(paths Paths) (map[string]struct{}, error) {
-	project, local, err := loadBothScopes(paths)
-	if err != nil {
-		return nil, err
-	}
-	known := map[string]struct{}{}
-	for _, rf := range []*config.RulesFile{project, local} {
-		if rf == nil {
-			continue
-		}
-		for _, r := range rf.Rules {
-			known[r.Name] = struct{}{}
-		}
-	}
-	return known, nil
 }

@@ -1,7 +1,6 @@
 package rules
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -85,8 +84,8 @@ func TestAddRejectsSameNameAcrossScopes(t *testing.T) {
 	if err == nil {
 		t.Fatal("cross-scope same-name add should be rejected")
 	}
-	if !strings.Contains(err.Error(), "project scope") {
-		t.Errorf("error should name the offending scope; got: %v", err)
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("error should say the name already exists; got: %v", err)
 	}
 }
 
@@ -287,8 +286,8 @@ func TestAddRejectsCrossScopeDuplicate(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected Add(local, shared) to be rejected after a project rule of the same name exists")
 	}
-	if !strings.Contains(err.Error(), "project scope") {
-		t.Errorf("error should name the offending scope; got: %v", err)
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("error should say the name already exists; got: %v", err)
 	}
 	// And the inverse — pre-existing local with same name should block a
 	// new project add.
@@ -298,8 +297,8 @@ func TestAddRejectsCrossScopeDuplicate(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected Add(project, shared) to be rejected after a local rule of the same name exists")
 	}
-	if !strings.Contains(err.Error(), "local scope") {
-		t.Errorf("error should name the offending scope; got: %v", err)
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("error should say the name already exists; got: %v", err)
 	}
 }
 
@@ -321,8 +320,8 @@ func TestLoadEffectiveRejectsCrossScopeDuplicates(t *testing.T) {
 	if err == nil {
 		t.Fatal("LoadEffective should reject cross-scope duplicates")
 	}
-	if !strings.Contains(err.Error(), "both rules.yml and rules.local.yml") {
-		t.Errorf("error should name both files; got: %v", err)
+	if !strings.Contains(err.Error(), "same handle") {
+		t.Errorf("error should explain the handle collision; got: %v", err)
 	}
 }
 
@@ -636,12 +635,12 @@ func TestResolveAliasWithNoFileWorks(t *testing.T) {
 	}
 }
 
-func TestErrNoFileSentinel(t *testing.T) {
+func TestRemoveUnknownRuleErrors(t *testing.T) {
 	p := pathsIn(t)
 	scope := ScopeProject
 	err := Remove(p, "x", &scope)
-	if !errors.Is(err, ErrNoFile) {
-		t.Errorf("want ErrNoFile, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("want a not-found error, got %v", err)
 	}
 }
 

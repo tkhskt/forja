@@ -322,12 +322,24 @@ type EffectiveRule struct {
 	Rule
 	Scope   string // "project" or "local"
 	BaseDir string // directory of the yml file the rule came from (for bodyFile resolution)
+	Handle  string // fully-qualified handle: "<bundle>/<name>", or just "<name>" at the root
+}
+
+// DisplayHandle returns the addressable handle for UI/CLI output, falling back
+// to the bare Name when Handle is unset (e.g. a directly-constructed
+// EffectiveRule). Rules materialized via EffectiveFromSources always carry a
+// Handle.
+func (e EffectiveRule) DisplayHandle() string {
+	if e.Handle != "" {
+		return e.Handle
+	}
+	return e.Name
 }
 
 // Scope constants for EffectiveRule.Scope.
 const (
 	ScopeProject = "project"
-	ScopeLocal    = "local"
+	ScopeLocal   = "local"
 )
 
 // ResolveBody returns the body content to ship to the device. Either reads

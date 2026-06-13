@@ -11,6 +11,8 @@ forja treats the current working directory as a single "project". The yml file i
 
 The yml file holds no information about which app a rule targets, so the same rule can be reused across multiple apps (dev/staging variants, multiple apps in a monorepo, etc.).
 
+Beyond the two root files, **rules can be split into bundle directories**: any `rules.yml` / `rules.local.yml` found under `forja/` (e.g. `forja/rules/payments/rules.yml`) is discovered and merged. A bundle is a self-contained, shareable unit. See [Rule handles & bundles](#rule-handles--bundles).
+
 forja never creates the `forja/` directory on its own — `forja init` is the one-time setup step. Every other command refuses to run if `forja/` is missing from the current cwd, so accidentally invoking forja from the wrong directory can't silently spawn an orphan `forja/` somewhere unexpected.
 
 ---
@@ -40,7 +42,7 @@ forja rules add slow-bar --host example.com --path /bar --status 503
 forja apply --app com.tkhskt.sample_app --enable slow-bar
 ```
 
-`rules add` writes to `forja/rules.yml` (the project / committed catalog) by default. Pass `--local` to write to `forja/rules.local.yml` instead — that file is meant to be gitignored, for personal overrides on top of the team-shared catalog.
+`rules add` writes to `forja/rules.yml` (the project / committed catalog) by default. Pass `--local` to write to `forja/rules.local.yml` instead — that file is meant to be gitignored, for personal overrides on top of the team-shared catalog. Pass `--dir <path>` to write into a bundle (`forja/<path>/rules.yml`) — see [Rule handles & bundles](#rule-handles--bundles).
 
 `apply` is what actually flips `status.json` and pushes the new effective ruleset to the device.
 
@@ -129,6 +131,9 @@ CLI flags stay flat; forja distributes them into the yml's `match:` / `response:
              --header replaces the entire header map; pass --header '' to clear
 --local      target the local (personal, gitignored) rules file (forja/rules.local.yml).
              Default is project scope (forja/rules.yml — the team-shared catalog)
+--dir        (add only) write into forja/<dir>/rules.yml — a shareable bundle
+             directory (created if absent, must stay inside forja/) instead of
+             the root catalog. See "Rule handles & bundles"
 --no-sync    (update / remove only) suppress the auto-push
 ```
 
@@ -163,20 +168,50 @@ Omitting `--body` entirely leaves the original response body untouched.
 
 ---
 
-## Rule names are unique across both scopes
+## Rule handles & bundles
 
-Rule names form a single flat namespace shared by `forja/rules.yml` and `forja/rules.local.yml`. Adding a rule whose name already exists in *either* file is rejected. Hand-editing a yml to introduce a cross-scope duplicate makes every subsequent forja command fail at load time with a diagnostic naming the offending rule.
+Rules don't have to live in just the two root files. **Any `rules.yml` / `rules.local.yml` in a subdirectory under `forja/` is discovered and merged**, so you can split rules into self-contained *bundles* — typically one directory per feature/team — and share a bundle by copying its directory. Its `responses/` assets come along, because `bodyFile` paths resolve relative to the file that declared the rule.
 
-This is intentional: `status.json` keys per-app enabled state by rule name, so a name shared between two files would mean an ambiguous toggle. If you want a personal variant of a team rule, give it a distinct name and disable the original on the apps you care about:
-
-```bash
-# Team rule lives in rules.yml as "mock-failure" (status 500).
-# You want 503 just for your local testing — pick a different name:
-forja rules add mock-failure-503 --local --host example.com --status 503
-forja apply --app dev --disable mock-failure --enable mock-failure-503
+```
+forja/
+├── rules.yml                      # root catalog (project)
+├── rules.local.yml                # root catalog (local)
+└── rules/
+    ├── payments/
+    │   ├── rules.yml              # a bundle: one or more related rules
+    │   └── responses/
+    │       └── declined.json
+    └── search/
+        └── rules.yml
 ```
 
-This keeps the team's rule intact and makes "which mock is firing right now?" obvious from the name in the logs.
+> One directory holds at most one `rules.yml` (+ an optional `rules.local.yml`); a `rules.yml` may contain multiple rules. To split finer, add more subdirectories.
+
+Create a rule directly in a bundle with `--dir` (the directory is created if absent and must stay inside `forja/`):
+
+```bash
+forja rules add declined --status 402 --body-file responses/declined.json --dir rules/payments
+# → writes forja/rules/payments/rules.yml
+```
+
+### Handles
+
+Every rule is addressed by a **handle**:
+
+- a rule in the root `forja/rules.yml` → just its **name**, e.g. `mock-failure`
+- a rule in a bundle → **`<bundle>/<name>`**, e.g. `rules/payments/declined`
+
+Within a single file every name must be unique, but **the same name may repeat across different bundles**. Commands that reference a rule (`apply --enable` / `--disable`, `rules update`, `rules remove`) accept a **bare name when it's unambiguous**; when the same name exists in multiple bundles, qualify it with the full handle — forja lists the candidates if you don't:
+
+```bash
+forja apply --app dev --enable declined                  # OK when "declined" is unique
+forja apply --app dev --enable rules/payments/declined   # qualify when ambiguous
+forja rules update rules/payments/declined --status 503  # update/remove take handles too
+```
+
+`status.json` records the resolved handle. A root rule's handle equals its name, so status files written before bundles existed keep working with **no migration**. Rule names may not contain `/` (it's the handle separator).
+
+> The same name in one bundle's `rules.yml` **and** its `rules.local.yml` collides on handle (both would be `<bundle>/<name>`) and is rejected — give one a different name. To keep a personal variant of a *root* team rule, either give it a distinct name or put it in a local bundle so it gets a different handle.
 
 ---
 
@@ -265,7 +300,7 @@ Top-level:
 
 | Field | Purpose |
 |---|---|
-| `name` | Identifier (handle for add/remove, unique workspace-wide) |
+| `name` | Identifier, unique within its file. The addressable **handle** is `<bundle>/<name>` (or just `<name>` at the root) — see [Rule handles & bundles](#rule-handles--bundles) |
 | `match` | Match conditions group (see above) |
 | `response` | Replacement response group (see above) |
 
@@ -279,13 +314,13 @@ Only **the first matching rule** in the array is applied (OkHttp interceptor sem
 >
 > The same warning ships inside the file as a top-level `$comment` key (JSON Schema-style metadata) so anyone opening it in an editor sees it on line 1. Any `$`-prefixed key is silently dropped on load, so the convention is forward-compatible with additional metadata (`$schema` etc.) without forja ever interpreting those entries as applicationIds.
 
-The **per-app enabled rule list**: "if `name` is in app X.s enabled list, the rule is on; otherwise it's off." Two values, no middle ground:
+The **per-app enabled rule list**, keyed by rule **handle**: "if a rule's handle is in app X's enabled list, the rule is on; otherwise it's off." Root rules appear as a bare name; bundle rules appear as `<bundle>/<name>`. Two values, no middle ground:
 
 ```json
 {
   "$comment": "THIS FILE IS GENERATED BY forja. DO NOT EDIT BY HAND.",
   "com.tkhskt.sample_app": {
-    "enabled": ["mock-failure", "big-response"]
+    "enabled": ["mock-failure", "rules/payments/declined"]
   },
   "com.tkhskt.sample_app.staging": {
     "enabled": ["mock-failure"]

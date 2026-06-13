@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -121,8 +122,10 @@ func newRulesListCmd() *cobra.Command {
 		Long: `List the merged rule catalog from forja/rules.yml (project) and
 forja/rules.local.yml (local). Rules render in the same order the OkHttp
 interceptor would scan them (local rules first, then project rules — the
-on-device match precedence). Rule names are unique across both scopes, so
-each row appears exactly once.
+on-device match precedence) and are labeled by their handle —
+<bundle>/<name>, or just <name> for rules in the root rules.yml. The catalog
+spans the root files plus any rules.yml / rules.local.yml in bundle
+subdirectories under forja/.
 
 With --app, each rule line is prefixed with [on] / [off] to show whether
 it's currently enabled for that app per forja/status.json. Without --app,
@@ -208,7 +211,7 @@ func formatRuleLine(r config.EffectiveRule, showEnabled bool) string {
 	} else {
 		sb.WriteString("- ")
 	}
-	sb.WriteString(r.Name)
+	sb.WriteString(r.DisplayHandle())
 
 	fields := []string{}
 	if r.Match.Host != "" {
@@ -249,9 +252,9 @@ func formatRuleLine(r config.EffectiveRule, showEnabled bool) string {
 	return sb.String()
 }
 
-
 func newRulesAddCmd() *cobra.Command {
 	var f rulesFlags
+	var dir string
 	c := &cobra.Command{
 		Use:   "add NAME",
 		Short: "Append a rule to the catalog (yml only — does not touch any device)",
@@ -292,17 +295,23 @@ The newly added rule is NOT applied to any app. To turn it on, run
 				Body:     body,
 				BodyFile: f.bodyFile,
 				Headers:  headers,
+				Dir:      dir,
 			}
 			scope := scopeFrom(&f)
 			paths := rulesPaths()
 			if err := rules.Add(paths, scope, opts); err != nil {
 				return err
 			}
-			fmt.Printf("added rule %q to %s scope\n", args[0], scope)
+			where := scope.String() + " scope"
+			if dir != "" {
+				where = filepath.ToSlash(filepath.Join("forja", dir))
+			}
+			fmt.Printf("added rule %q to %s\n", args[0], where)
 			return nil
 		},
 	}
 	bindRulesFlags(c, &f)
+	c.Flags().StringVar(&dir, "dir", "", "write the rule into forja/<dir>/rules.yml (a shareable bundle directory) instead of the root rules.yml")
 	return c
 }
 
@@ -319,9 +328,9 @@ After the yml edit, forja iterates status.json and re-pushes the rule set to
 every app where this rule is currently enabled. Pass --no-sync to skip
 the auto-push (yml is still updated).
 
-Rule names are unique across both scopes, so update just finds the rule
-wherever it lives. --local is accepted for explicitness but isn't strictly
-required.
+Rules are addressed by handle: a bare name when it's unique, or <bundle>/<name>
+when the same name lives in multiple bundles (update lists the candidates if a
+bare name is ambiguous). --local is accepted for explicitness.
 
   forja rules update teapot --status 503    # patch + auto-push to every app where teapot is on
   forja rules update teapot --no-sync       # patch yml only`,
@@ -591,7 +600,7 @@ func runRulesTUI(app string) error {
 	enabledNames := []string{}
 	for _, r := range updated {
 		if r.Enabled {
-			enabledNames = append(enabledNames, r.Name)
+			enabledNames = append(enabledNames, r.Handle)
 		}
 	}
 	if err := rules.SetEnabledForApp(paths, app, enabledNames); err != nil {
@@ -632,7 +641,7 @@ func parseBody(s string) (*config.BodyValue, error) {
 }
 
 // parseHeaders parses a slice of `KEY=VALUE` flag values into a header map.
-// A single empty entry (`--header ''`) is the documented way to express
+// A single empty entry (`--header ”`) is the documented way to express
 // "clear all headers" on update; it returns an empty (non-nil) map.
 //
 // Validation:
