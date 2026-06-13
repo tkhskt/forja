@@ -13,13 +13,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Canonical paths under ./forja/, relative to cwd. The directory is the
+// Canonical paths under ./.forja/, relative to cwd. The directory is the
 // per-project root and forja never modifies these paths automatically — the
-// dir layout is part of the user's repo.
+// dir layout is part of the user's repo. Derived from DefaultDir so the
+// directory name lives in exactly one place.
 const (
-	DefaultPath       = "forja/rules.yml"       // project-scope rule definitions (you should commit it)
-	DefaultLocalPath  = "forja/rules.local.yml" // local-scope rule definitions (you should gitignore it)
-	DefaultStatusPath = "forja/status.json"     // per-(app, rule) enabled state (you should gitignore it)
+	DefaultPath       = DefaultDir + "/rules.yml"       // project-scope rule definitions (you should commit it)
+	DefaultLocalPath  = DefaultDir + "/rules.local.yml" // local-scope rule definitions (you should gitignore it)
+	DefaultStatusPath = DefaultDir + "/status.json"     // per-(app, rule) enabled state (you should gitignore it)
 )
 
 // Load reads a RulesFile from disk. If the file is missing it returns nil
@@ -75,10 +76,10 @@ func firstDuplicateRuleName(rules []Rule) (name string, first, second int, found
 }
 
 // Save writes the RulesFile to disk. The parent directory must already
-// exist — `forja init` is responsible for creating forja/, and the cmd
+// exist — `forja init` is responsible for creating .forja/, and the cmd
 // layer's requireForjaDir preflight gates every write path. Save itself
 // does NOT mkdir so accidental writes from outside an initialized project
-// fail loudly instead of silently materializing a stray forja/ directory.
+// fail loudly instead of silently materializing a stray .forja/ directory.
 // The output is deterministic (2-space indent, sorted-by-document-order).
 func Save(path string, rf *RulesFile) error {
 	enc, err := marshalYAML(rf)
@@ -117,7 +118,7 @@ type AppStatus struct {
 }
 
 // Status is the workspace-wide enabled state, keyed by Android applicationId.
-// Lives in forja/status.json and is considered transient runtime state
+// Lives in .forja/status.json and is considered transient runtime state
 // (intended to be gitignored — forja does not touch your .gitignore for you).
 // The on-disk shape is a flat top-level map of app → {enabled},
 // e.g. `{"com.example.app": {"enabled": ["rule-a", "rule-b"]}, "com.example.other": {"enabled": []}}`.
@@ -278,7 +279,7 @@ func (s Status) EnabledFor(app string) []string {
 	return out
 }
 
-// LoadStatus reads forja/status.json. Missing file returns an empty Status
+// LoadStatus reads .forja/status.json. Missing file returns an empty Status
 // (not nil) so callers can mutate without nil checks.
 func LoadStatus(path string) (Status, error) {
 	s := Status{}

@@ -27,7 +27,7 @@ func newApplyCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "apply --app APP [--enable a,b] [--disable c,d]",
 		Short: "Enable/disable rules on an app and push to the device",
-		Long: `Patch the per-app enabled state in forja/status.json and push the new
+		Long: `Patch the per-app enabled state in .forja/status.json and push the new
 effective rule set to the device.
 
   forja apply --app com.example.app --enable teapot,dev-mock

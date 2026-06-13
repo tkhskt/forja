@@ -17,4 +17,5 @@ out/
 
 # forja runtime state at the repo root only — anchored with `/` so it doesn't
 # match source paths like jvmti-agent/src/main/kotlin/com/tkhskt/forja/...
-/forja/
+/.forja/
+forja

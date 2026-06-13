@@ -11,14 +11,14 @@ import (
 func newAliasCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "alias",
-		Short: "Manage personal applicationId aliases (forja/aliases.local.yml — gitignore it locally)",
+		Short: "Manage personal applicationId aliases (.forja/aliases.local.yml — gitignore it locally)",
 		Long: `Define short aliases for frequently-used Android applicationId names. Any forja
 command that takes --app accepts an alias in place of the full name:
 
   forja alias set dev com.tkhskt.forja.sample
   forja apply --app dev --enable teapot         # → com.tkhskt.forja.sample
 
-Aliases live in forja/aliases.local.yml — per-developer file that you should
+Aliases live in .forja/aliases.local.yml — per-developer file that you should
 gitignore (forja never touches your .gitignore for you). Unknown inputs to
 --app pass through unchanged, so literal applicationIds still work.`,
 	}

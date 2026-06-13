@@ -8,16 +8,16 @@ import (
 	"sort"
 )
 
-// Rule files are discovered by name anywhere under the forja/ directory: a
+// Rule files are discovered by name anywhere under the .forja/ directory: a
 // directory contributes rules via a file named rules.yml (project scope) and/or
 // rules.local.yml (local scope). This lets rules be split into self-contained
-// bundle directories (e.g. forja/rules/payments/rules.yml + responses/) that
-// can be shared by copying the directory, while the root forja/rules.yml keeps
+// bundle directories (e.g. .forja/rules/payments/rules.yml + responses/) that
+// can be shared by copying the directory, while the root .forja/rules.yml keeps
 // working unchanged.
 const (
 	RuleFileName      = "rules.yml"
 	RuleLocalFileName = "rules.local.yml"
-	DefaultDir        = "forja" // the forja/ root, relative to cwd
+	DefaultDir        = ".forja" // the .forja/ root, relative to cwd
 )
 
 // RuleSource is one discovered rules file: its parsed content plus the context

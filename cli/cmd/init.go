@@ -6,9 +6,11 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/tkhskt/forja/internal/config"
 )
 
-// initialRulesYml is the template forja init writes to forja/rules.yml. The
+// initialRulesYml is the template forja init writes to .forja/rules.yml. The
 // comments document the rule schema right where users will look first
 // (their editor on the just-created file). Once `forja rules add` writes to
 // the file, yaml.v3's encoder will strip these comments — that's fine, by
@@ -40,29 +42,29 @@ const initialRulesYml = `# forja rule catalog. Hand-editable.
 #   https://github.com/tkhskt/forja/blob/main/docs/usage.md#rule-schema
 `
 
-// recommendedGitignoreEntries lists the files inside forja/ that should be
+// recommendedGitignoreEntries lists the files inside .forja/ that should be
 // kept out of version control. init prints these as a suggestion instead of
 // editing .gitignore directly — VCS hygiene is the user's call, not the
 // tool's (this is the convention followed by ESLint / Prettier / terraform /
 // tsc; project scaffolders like cargo new / gradle init do create one, but
 // forja is a config tool layered onto an existing project, not a scaffolder).
 var recommendedGitignoreEntries = []string{
-	"forja/rules.local.yml",
-	"forja/status.json",
-	"forja/aliases.local.yml",
+	config.DefaultLocalPath,
+	config.DefaultStatusPath,
+	config.DefaultAliasesPath,
 }
 
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Create forja/ in the current directory (a one-time setup step)",
-		Long: `Create a fresh forja/ directory and seed forja/rules.yml with a
+		Short: "Create .forja/ in the current directory (a one-time setup step)",
+		Long: `Create a fresh .forja/ directory and seed .forja/rules.yml with a
 schema-commented template ready for the first 'forja rules add'.
 
 forja never auto-creates its working directory. Run this once at the project
-root before any other command. Subsequent commands refuse to run if forja/
+root before any other command. Subsequent commands refuse to run if .forja/
 is missing, so accidentally invoking forja from the wrong cwd no longer
-silently spawns an orphan forja/ directory there.
+silently spawns an orphan .forja/ directory there.
 
 init does NOT edit your .gitignore — it just prints the recommended entries
 afterwards so you can add them by hand. This matches how other config tools
@@ -76,11 +78,11 @@ behave (ESLint, terraform, tsc).`,
 
 // runInit performs the directory + rules.yml creation, then prints the
 // recommended .gitignore lines so the user can copy them in if they want.
-// Errors loudly if forja/ is already populated — silently overwriting a
+// Errors loudly if .forja/ is already populated — silently overwriting a
 // rule catalog would be a footgun.
 func runInit() error {
-	const dir = "forja"
-	const file = "forja/rules.yml"
+	const dir = config.DefaultDir
+	const file = config.DefaultPath
 
 	if _, err := os.Stat(file); err == nil {
 		return fmt.Errorf("forja is already initialized here (%s exists). Remove the file first if you really want to reset", file)
@@ -114,16 +116,16 @@ func runInit() error {
 //
 // The error message names both so users don't have to guess.
 func requireForjaDir() error {
-	info, err := os.Stat("forja")
+	info, err := os.Stat(config.DefaultDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return errors.New("no forja/ directory in current working directory.\n" +
+			return errors.New("no .forja/ directory in current working directory.\n" +
 				"  run `forja init` here to set one up, or chdir to a forja-managed directory.")
 		}
-		return fmt.Errorf("stat forja/: %w", err)
+		return fmt.Errorf("stat .forja/: %w", err)
 	}
 	if !info.IsDir() {
-		return errors.New("`forja` exists in the current working directory but is not a directory")
+		return errors.New("`.forja` exists in the current working directory but is not a directory")
 	}
 	return nil
 }

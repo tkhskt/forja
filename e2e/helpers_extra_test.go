@@ -17,7 +17,7 @@ import (
 // against the yml file's directory.
 func mkForjaResponsesDir(t *testing.T, fixtures ...string) {
 	t.Helper()
-	dir := filepath.Join(repoRoot, "forja", "responses")
+	dir := filepath.Join(repoRoot, ".forja", "responses")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}

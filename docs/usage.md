@@ -4,16 +4,16 @@ forja treats the current working directory as a single "project". The yml file i
 
 | File | Scope | Git | Role | Edit by hand? |
 |---|---|---|---|---|
-| `forja/rules.yml` | **project** | commit | rule catalog shared by the team | ✅ |
-| `forja/rules.local.yml` | **local** | gitignore | personal rule catalog (overrides project) | ✅ |
-| `forja/status.json` | (state) | gitignore | **per-app** enabled state | ❌ CLI-managed |
-| `forja/aliases.local.yml` | (personal) | gitignore | optional short-name map for `--app` | ✅ |
+| `.forja/rules.yml` | **project** | commit | rule catalog shared by the team | ✅ |
+| `.forja/rules.local.yml` | **local** | gitignore | personal rule catalog (overrides project) | ✅ |
+| `.forja/status.json` | (state) | gitignore | **per-app** enabled state | ❌ CLI-managed |
+| `.forja/aliases.local.yml` | (personal) | gitignore | optional short-name map for `--app` | ✅ |
 
 The yml file holds no information about which app a rule targets, so the same rule can be reused across multiple apps (dev/staging variants, multiple apps in a monorepo, etc.).
 
-Beyond the two root files, **rules can be split into bundle directories**: any `rules.yml` / `rules.local.yml` found under `forja/` (e.g. `forja/rules/payments/rules.yml`) is discovered and merged. A bundle is a self-contained, shareable unit. See [Rule handles & bundles](#rule-handles--bundles).
+Beyond the two root files, **rules can be split into bundle directories**: any `rules.yml` / `rules.local.yml` found under `.forja/` (e.g. `.forja/rules/payments/rules.yml`) is discovered and merged. A bundle is a self-contained, shareable unit. See [Rule handles & bundles](#rule-handles--bundles).
 
-forja never creates the `forja/` directory on its own — `forja init` is the one-time setup step. Every other command refuses to run if `forja/` is missing from the current cwd, so accidentally invoking forja from the wrong directory can't silently spawn an orphan `forja/` somewhere unexpected.
+forja never creates the `.forja/` directory on its own — `forja init` is the one-time setup step. Every other command refuses to run if `.forja/` is missing from the current cwd, so accidentally invoking forja from the wrong directory can't silently spawn an orphan `.forja/` somewhere unexpected.
 
 ---
 
@@ -26,10 +26,10 @@ forja init
 ```
 
 The command:
-- creates `forja/` and seeds `forja/rules.yml` with a schema-commented template,
+- creates `.forja/` and seeds `.forja/rules.yml` with a schema-commented template,
 - prints the recommended `.gitignore` entries so you can add them by hand (init does not edit `.gitignore` itself — VCS hygiene is your call, matching the convention of ESLint / Prettier / terraform / tsc).
 
-`init` refuses to overwrite an existing `forja/rules.yml` so a populated catalog can never be silently wiped by a stray re-run. Re-init in a fresh checkout is safe.
+`init` refuses to overwrite an existing `.forja/rules.yml` so a populated catalog can never be silently wiped by a stray re-run. Re-init in a fresh checkout is safe.
 
 ---
 
@@ -42,7 +42,7 @@ forja rules add slow-bar --host example.com --path /bar --status 503
 forja apply --app com.tkhskt.sample_app --enable slow-bar
 ```
 
-`rules add` writes to `forja/rules.yml` (the project / committed catalog) by default. Pass `--local` to write to `forja/rules.local.yml` instead — that file is meant to be gitignored, for personal overrides on top of the team-shared catalog. Pass `--dir <path>` to write into a bundle (`forja/<path>/rules.yml`) — see [Rule handles & bundles](#rule-handles--bundles).
+`rules add` writes to `.forja/rules.yml` (the project / committed catalog) by default. Pass `--local` to write to `.forja/rules.local.yml` instead — that file is meant to be gitignored, for personal overrides on top of the team-shared catalog. Pass `--dir <path>` to write into a bundle (`.forja/<path>/rules.yml`) — see [Rule handles & bundles](#rule-handles--bundles).
 
 `apply` is what actually flips `status.json` and pushes the new effective ruleset to the device.
 
@@ -57,7 +57,7 @@ Patch semantics — only the fields you pass change. Auto-pushes to every app wh
 ### 3. Hand-edit the yml, then sync
 
 ```bash
-$EDITOR forja/rules.yml
+$EDITOR .forja/rules.yml
 forja sync                 # re-push to every app with a status entry
 forja sync --app dev       # or just one app (alias or full name)
 ```
@@ -87,7 +87,7 @@ Turns off every rewrite on the named app, so the app sees the original (real) re
 
 | Command | Behavior |
 |---|---|
-| `forja init` | One-time setup: create `forja/rules.yml` with a schema-commented template, and print the recommended `.gitignore` entries (does not edit `.gitignore` itself) |
+| `forja init` | One-time setup: create `.forja/rules.yml` with a schema-commented template, and print the recommended `.gitignore` entries (does not edit `.gitignore` itself) |
 | `forja rules add NAME [flags]` | Append a rule to the yml catalog. Does NOT push to any device — use `forja apply` or the TUI next |
 | `forja rules update NAME [flags]` | Patch the yml + **auto-push to every app where the rule is enabled**. `--no-sync` suppresses the push |
 | `forja rules remove NAME` | Delete from yml + **auto-push to every app where it was enabled** + drop the entry from every app in `status.json`. `--no-sync` suppresses the push |
@@ -97,7 +97,7 @@ Turns off every rewrite on the named app, so the app sees the original (real) re
 | `forja rules` | TUI: (1) list debuggable apps on the device → (2) pick one → (3) show the rule list with per-app toggles → q to push |
 | `forja rules --app X` | TUI: skip the picker and jump straight to the rule list for X |
 | `forja off --app X` | Turn off every rewrite on X (other apps untouched) |
-| `forja alias set NAME APP_ID` | Register a short name to use anywhere `--app` is accepted (writes to `forja/aliases.local.yml` — a personal file you should gitignore) |
+| `forja alias set NAME APP_ID` | Register a short name to use anywhere `--app` is accepted (writes to `.forja/aliases.local.yml` — a personal file you should gitignore) |
 | `forja alias rm NAME` | Delete an alias |
 | `forja alias list` | List registered aliases |
 
@@ -129,10 +129,10 @@ CLI flags stay flat; forja distributes them into the yml's `match:` / `response:
              Content-Type also drives the body's MIME type on the device
              (default application/json; charset=utf-8). On `update`, passing
              --header replaces the entire header map; pass --header '' to clear
---local      target the local (personal, gitignored) rules file (forja/rules.local.yml).
-             Default is project scope (forja/rules.yml — the team-shared catalog)
---dir        (add only) write into forja/<dir>/rules.yml — a shareable bundle
-             directory (created if absent, must stay inside forja/) instead of
+--local      target the local (personal, gitignored) rules file (.forja/rules.local.yml).
+             Default is project scope (.forja/rules.yml — the team-shared catalog)
+--dir        (add only) write into .forja/<dir>/rules.yml — a shareable bundle
+             directory (created if absent, must stay inside .forja/) instead of
              the root catalog. See "Rule handles & bundles"
 --no-sync    (update / remove only) suppress the auto-push
 ```
@@ -170,10 +170,10 @@ Omitting `--body` entirely leaves the original response body untouched.
 
 ## Rule handles & bundles
 
-Rules don't have to live in just the two root files. **Any `rules.yml` / `rules.local.yml` in a subdirectory under `forja/` is discovered and merged**, so you can split rules into self-contained *bundles* — typically one directory per feature/team — and share a bundle by copying its directory. Its `responses/` assets come along, because `bodyFile` paths resolve relative to the file that declared the rule.
+Rules don't have to live in just the two root files. **Any `rules.yml` / `rules.local.yml` in a subdirectory under `.forja/` is discovered and merged**, so you can split rules into self-contained *bundles* — typically one directory per feature/team — and share a bundle by copying its directory. Its `responses/` assets come along, because `bodyFile` paths resolve relative to the file that declared the rule.
 
 ```
-forja/
+.forja/
 ├── rules.yml                      # root catalog (project)
 ├── rules.local.yml                # root catalog (local)
 └── rules/
@@ -187,18 +187,18 @@ forja/
 
 > One directory holds at most one `rules.yml` (+ an optional `rules.local.yml`); a `rules.yml` may contain multiple rules. To split finer, add more subdirectories.
 
-Create a rule directly in a bundle with `--dir` (the directory is created if absent and must stay inside `forja/`):
+Create a rule directly in a bundle with `--dir` (the directory is created if absent and must stay inside `.forja/`):
 
 ```bash
 forja rules add declined --status 402 --body-file responses/declined.json --dir rules/payments
-# → writes forja/rules/payments/rules.yml
+# → writes .forja/rules/payments/rules.yml
 ```
 
 ### Handles
 
 Every rule is addressed by a **handle**:
 
-- a rule in the root `forja/rules.yml` → just its **name**, e.g. `mock-failure`
+- a rule in the root `.forja/rules.yml` → just its **name**, e.g. `mock-failure`
 - a rule in a bundle → **`<bundle>/<name>`**, e.g. `rules/payments/declined`
 
 Within a single file every name must be unique, but **the same name may repeat across different bundles**. Commands that reference a rule (`apply --enable` / `--disable`, `rules update`, `rules remove`) accept a **bare name when it's unambiguous**; when the same name exists in multiple bundles, qualify it with the full handle — forja lists the candidates if you don't:
@@ -217,7 +217,7 @@ forja rules update rules/payments/declined --status 503  # update/remove take ha
 
 ## Rule schema
 
-### `forja/rules.yml` / `forja/rules.local.yml`
+### `.forja/rules.yml` / `.forja/rules.local.yml`
 
 Same schema in both files. The yml holds **no applicationId field and no `enabled` field** — it's a pure rule catalog. Each rule is split into two nested groups: **`match:`** decides whether the rule fires, **`response:`** decides what gets sent back.
 
@@ -272,7 +272,7 @@ Both `match:` and `response:` are optional. A rule with only `response:` matches
 - `.json` extension → parsed as a JSON object → sent as `bodyObject`
 - anything else → raw bytes → sent as a raw string
 
-So `big-response` above reads `forja/responses/heavy.json`. Handy when you don't want a large JSON blob or HTML template inlined in the yml.
+So `big-response` above reads `.forja/responses/heavy.json`. Handy when you don't want a large JSON blob or HTML template inlined in the yml.
 
 `response.headers` is an **optional map of header overrides** applied on top of the matched response. The `Content-Type` entry also drives the response body's MIME type on the device — by default the runtime returns `application/json; charset=utf-8`, so set `Content-Type` explicitly when returning HTML / plain text / XML / SVG / etc.
 
@@ -308,7 +308,7 @@ Only **the first matching rule** in the array is applied (OkHttp interceptor sem
 
 ---
 
-### `forja/status.json`
+### `.forja/status.json`
 
 > **Don't edit this file by hand.** It's a CLI-managed mirror of what's currently pushed to each device. Manual edits won't reach the device and may be overwritten on the next `forja` invocation. The commands that write it are `forja apply`, the `rules` TUI's save action, `forja off`, and `forja rules remove`.
 >
@@ -338,7 +338,7 @@ forja does not edit `.gitignore` for you. When sharing across a team, add these 
 
 ```gitignore
 # forja: don't commit personal rules / state / aliases
-forja/rules.local.yml
-forja/status.json
-forja/aliases.local.yml
+.forja/rules.local.yml
+.forja/status.json
+.forja/aliases.local.yml
 ```

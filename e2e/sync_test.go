@@ -242,7 +242,7 @@ func TestSyncManualYmlEditTakesEffectOnNextCommand(t *testing.T) {
 	maestroFlow(t, "tap_singleton_assert_418.yaml")
 
 	// Hand-edit: swap status: 418 → 503 directly in the yml.
-	ymlPath := filepath.Join(repoRoot, "forja", "rules.yml")
+	ymlPath := filepath.Join(repoRoot, ".forja", "rules.yml")
 	raw, err := os.ReadFile(ymlPath)
 	if err != nil {
 		t.Fatalf("read yml: %v", err)
@@ -289,7 +289,7 @@ func TestSyncManualYmlAddNewRuleIsPicked(t *testing.T) {
 
 	// Append a fresh catalog entry to rules.yml by hand. Indentation
 	// matches what the writer emits (2-space list items under rules:).
-	ymlPath := filepath.Join(repoRoot, "forja", "rules.yml")
+	ymlPath := filepath.Join(repoRoot, ".forja", "rules.yml")
 	raw, err := os.ReadFile(ymlPath)
 	if err != nil {
 		t.Fatalf("read yml: %v", err)
@@ -349,7 +349,7 @@ func TestSyncManualYmlRemoveRuleDropsFromDevice(t *testing.T) {
 	maestroFlow(t, "tap_singleton_assert_418.yaml")
 
 	// Strip the `doomed` entry from yml.
-	ymlPath := filepath.Join(repoRoot, "forja", "rules.yml")
+	ymlPath := filepath.Join(repoRoot, ".forja", "rules.yml")
 	raw, err := os.ReadFile(ymlPath)
 	if err != nil {
 		t.Fatalf("read yml: %v", err)
@@ -431,7 +431,7 @@ appId: com.tkhskt.forja.sample
 `)
 
 	// Hand-edit: replace the body JSON directly in the yml.
-	ymlPath := filepath.Join(repoRoot, "forja", "rules.yml")
+	ymlPath := filepath.Join(repoRoot, ".forja", "rules.yml")
 	raw, err := os.ReadFile(ymlPath)
 	if err != nil {
 		t.Fatalf("read yml: %v", err)
@@ -498,7 +498,7 @@ func TestSyncCommandPkgFilterOnlyAffectsTarget(t *testing.T) {
 	}
 
 	// Hand-edit body, then sync ONLY AppDev.
-	ymlPath := filepath.Join(repoRoot, "forja", "rules.yml")
+	ymlPath := filepath.Join(repoRoot, ".forja", "rules.yml")
 	raw, err := os.ReadFile(ymlPath)
 	if err != nil {
 		t.Fatalf("read yml: %v", err)

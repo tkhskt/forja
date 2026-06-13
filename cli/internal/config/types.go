@@ -1,6 +1,6 @@
 // Package config defines forja's on-disk file formats — the rule catalog
-// (forja/rules.yml + rules.local.yml), the per-package enabled state
-// (forja/status.json), and the personal alias map (forja/aliases.local.yml) —
+// (.forja/rules.yml + rules.local.yml), the per-package enabled state
+// (.forja/status.json), and the personal alias map (.forja/aliases.local.yml) —
 // and converts the catalog to the JSON format consumed by the on-device runtime.
 package config
 
@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// RulesFile is the top-level structure of ./forja/rules.yml. The file is a
+// RulesFile is the top-level structure of ./.forja/rules.yml. The file is a
 // pure catalog — no package targeting lives in the yml. Rules are applied to
 // specific packages at runtime via status.json's per-package enabled lists.
 //
@@ -25,7 +25,7 @@ type RulesFile struct {
 // into "when does this fire?" (Match) and "what does it do?" (Response).
 //
 // `Enabled` is intentionally NOT persisted to the yaml file (yaml:"-"). The
-// enabled state lives in forja/status.json so that toggling a rule on/off
+// enabled state lives in .forja/status.json so that toggling a rule on/off
 // doesn't create noise in git diffs of the shared rules.yml. The field
 // remains on the struct because it's used in-process when materializing the
 // "effective" view (= rules merged with status overrides) for the device JSON

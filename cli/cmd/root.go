@@ -37,14 +37,14 @@ func NewRoot() *cobra.Command {
 		Use:   "forja",
 		Short: "Rewrite OkHttp responses on debuggable Android apps at runtime",
 		Long: `forja injects a JVMTI agent into a debuggable Android process and
-rewrites OkHttp responses according to rules defined under ./forja/.
+rewrites OkHttp responses according to rules defined under ./.forja/.
 
 Run 'forja init' once at the project root to set the directory up. The rule
 catalog is split across two scopes for shareability:
 
-  forja/rules.yml         - project scope, committed, shared by the team
-  forja/rules.local.yml   - local scope, personal additions (gitignore it)
-  forja/status.json       - per-rule enabled state (gitignore it)
+  .forja/rules.yml         - project scope, committed, shared by the team
+  .forja/rules.local.yml   - local scope, personal additions (gitignore it)
+  .forja/status.json       - per-rule enabled state (gitignore it)
 
 The on-device copy is consumed and deleted by the agent so nothing persists
 across app process restarts.`,

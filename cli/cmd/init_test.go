@@ -9,7 +9,7 @@ import (
 )
 
 // chdir is a tiny test helper for the init flow, which is inherently
-// cwd-sensitive (it creates ./forja/ relative to wherever it runs). t.Chdir
+// cwd-sensitive (it creates ./.forja/ relative to wherever it runs). t.Chdir
 // would be cleaner but isn't available in all Go versions we support — wrap
 // os.Chdir with a t.Cleanup to restore.
 func chdir(t *testing.T, dir string) {
@@ -46,7 +46,7 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 }
 
 // TestInitCreatesForjaDirAndRulesYml: the happy path. init produces a
-// forja/ dir + a forja/rules.yml containing the schema-comment template.
+// .forja/ dir + a .forja/rules.yml containing the schema-comment template.
 // The template is intentionally comment-only — no `rules: []` placeholder
 // (yaml.v3 parses an all-comments file into a zero-value RulesFile, and
 // the first `rules add` materializes the `rules:` key naturally).
@@ -55,10 +55,10 @@ func TestInitCreatesForjaDirAndRulesYml(t *testing.T) {
 	if _, err := captureStdout(t, runInit); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
-	if _, err := os.Stat("forja"); err != nil {
-		t.Errorf("forja/ should exist: %v", err)
+	if _, err := os.Stat(".forja"); err != nil {
+		t.Errorf(".forja/ should exist: %v", err)
 	}
-	data, err := os.ReadFile("forja/rules.yml")
+	data, err := os.ReadFile(".forja/rules.yml")
 	if err != nil {
 		t.Fatalf("read rules.yml: %v", err)
 	}
@@ -119,12 +119,12 @@ func TestInitPrintsGitignoreRecommendation(t *testing.T) {
 
 // TestRequireForjaDirRejectsMissingDir: the preflight catches the
 // "you ran forja in the wrong cwd" footgun before it can spawn an orphan
-// forja/ directory. The error message must point users at `forja init`.
+// .forja/ directory. The error message must point users at `forja init`.
 func TestRequireForjaDirRejectsMissingDir(t *testing.T) {
 	chdir(t, t.TempDir())
 	err := requireForjaDir()
 	if err == nil {
-		t.Fatal("requireForjaDir should error when forja/ is absent")
+		t.Fatal("requireForjaDir should error when .forja/ is absent")
 	}
 	if !strings.Contains(err.Error(), "forja init") {
 		t.Errorf("error should mention `forja init`; got: %v", err)
@@ -147,7 +147,7 @@ func TestRequireForjaDirPassesAfterInit(t *testing.T) {
 // rather than risk an os.Stat-based false positive elsewhere.
 func TestRequireForjaDirRejectsForjaFile(t *testing.T) {
 	chdir(t, t.TempDir())
-	if err := os.WriteFile("forja", []byte("not a dir"), 0o644); err != nil {
+	if err := os.WriteFile(".forja", []byte("not a dir"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	err := requireForjaDir()

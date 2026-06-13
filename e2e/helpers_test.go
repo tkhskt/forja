@@ -296,7 +296,7 @@ func maestroFlow(t *testing.T, name string) string {
 // empty rules.yml) without each test having to remember the bootstrap step.
 func resetForjaState(t *testing.T, pkgs ...string) {
 	t.Helper()
-	_ = os.RemoveAll(filepath.Join(repoRoot, "forja"))
+	_ = os.RemoveAll(filepath.Join(repoRoot, ".forja"))
 	home, _ := os.UserHomeDir()
 	cacheDir := filepath.Join(home, ".cache", "forja")
 	for _, pkg := range pkgs {
@@ -333,7 +333,7 @@ func (s StatusJSON) IsEnabled(app, name string) bool {
 // {Enabled []string}.
 func readStatusJSON(t *testing.T) StatusJSON {
 	t.Helper()
-	path := filepath.Join(repoRoot, "forja", "status.json")
+	path := filepath.Join(repoRoot, ".forja", "status.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -365,7 +365,7 @@ func readStatusJSON(t *testing.T) StatusJSON {
 // The caller can grep with strings.Contains.
 func readRulesYml(t *testing.T, name string) string {
 	t.Helper()
-	path := filepath.Join(repoRoot, "forja", name)
+	path := filepath.Join(repoRoot, ".forja", name)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

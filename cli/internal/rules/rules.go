@@ -1,6 +1,6 @@
 // Package rules is the engine layer that command handlers call into.
-// It treats forja/rules.yml (project scope) and forja/rules.local.yml
-// (local scope) as the rule definitions and forja/status.json as the
+// It treats .forja/rules.yml (project scope) and .forja/rules.local.yml
+// (local scope) as the rule definitions and .forja/status.json as the
 // per-app enabled state. Operations target one of:
 //
 //   - rule definitions (Add / Update / Remove): writes a yml file
@@ -30,9 +30,9 @@ var ErrNoFile = errors.New("rules file not found")
 type Scope int
 
 const (
-	// ScopeProject corresponds to forja/rules.yml — shared, committed.
+	// ScopeProject corresponds to .forja/rules.yml — shared, committed.
 	ScopeProject Scope = iota
-	// ScopeLocal corresponds to forja/rules.local.yml — per-developer, intended
+	// ScopeLocal corresponds to .forja/rules.local.yml — per-developer, intended
 	// to be gitignored (forja never edits .gitignore for you).
 	ScopeLocal
 )
@@ -52,14 +52,14 @@ func (s Scope) String() string {
 // Paths bundles the on-disk locations we read/write. Tests can construct a
 // Paths over t.TempDir() to avoid touching the real cwd.
 type Paths struct {
-	Project string // forja/rules.yml (the root project file + add() default target)
-	Local   string // forja/rules.local.yml (the root local file)
-	Status  string // forja/status.json
-	Aliases string // forja/aliases.local.yml
-	Dir     string // forja/ root — recursively discovered for rules.yml / rules.local.yml
+	Project string // .forja/rules.yml (the root project file + add() default target)
+	Local   string // .forja/rules.local.yml (the root local file)
+	Status  string // .forja/status.json
+	Aliases string // .forja/aliases.local.yml
+	Dir     string // .forja/ root — recursively discovered for rules.yml / rules.local.yml
 }
 
-// DefaultPaths returns the paths relative to cwd (forja/rules.yml etc.).
+// DefaultPaths returns the paths relative to cwd (.forja/rules.yml etc.).
 func DefaultPaths() Paths {
 	return Paths{
 		Project: config.DefaultPath,
@@ -123,9 +123,9 @@ type AddOptions struct {
 	Body     *config.BodyValue
 	BodyFile string
 	Headers  map[string]string
-	// Dir, when non-empty, writes the rule into forja/<Dir>/rules.yml (a
+	// Dir, when non-empty, writes the rule into .forja/<Dir>/rules.yml (a
 	// shareable bundle directory, created if absent) instead of the root
-	// forja/rules.yml. Must stay inside forja/.
+	// .forja/rules.yml. Must stay inside .forja/.
 	Dir string
 }
 
@@ -215,7 +215,7 @@ func Add(paths Paths, scope Scope, opts AddOptions) error {
 	return config.Save(path, rf)
 }
 
-// forjaDir returns the forja/ root used for recursive discovery. Falls back to
+// forjaDir returns the .forja/ root used for recursive discovery. Falls back to
 // the directory of the root Project file so tests (which set only Project over
 // a TempDir) keep working without setting Dir explicitly.
 func (p Paths) forjaDir() string {
@@ -225,7 +225,7 @@ func (p Paths) forjaDir() string {
 	return filepath.Dir(p.Project)
 }
 
-// discover walks forja/ for every rules.yml (project) / rules.local.yml (local)
+// discover walks .forja/ for every rules.yml (project) / rules.local.yml (local)
 // and returns them in deterministic, first-match order. The same bare name may
 // repeat across different bundles, but each rule's fully-qualified handle
 // (bundle path + name) must be unique. A handle collision — e.g. the same name
@@ -250,9 +250,9 @@ func discover(paths Paths) ([]config.RuleSource, error) {
 }
 
 // addTargetPath resolves which yml file `rules add` writes to: the root file
-// for the scope by default, or forja/<dir>/{rules.yml|rules.local.yml} when a
+// for the scope by default, or .forja/<dir>/{rules.yml|rules.local.yml} when a
 // bundle directory is requested. The bundle dir is created if absent and must
-// stay inside forja/.
+// stay inside .forja/.
 func addTargetPath(paths Paths, scope Scope, dir string) (string, error) {
 	name := config.RuleFileName
 	if scope == ScopeLocal {
@@ -263,7 +263,7 @@ func addTargetPath(paths Paths, scope Scope, dir string) (string, error) {
 	}
 	clean := filepath.Clean(dir)
 	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("--dir must be a path inside forja/ (got %q)", dir)
+		return "", fmt.Errorf("--dir must be a path inside .forja/ (got %q)", dir)
 	}
 	targetDir := filepath.Join(paths.forjaDir(), clean)
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
@@ -273,7 +273,7 @@ func addTargetPath(paths Paths, scope Scope, dir string) (string, error) {
 }
 
 // handleFor builds a rule's fully-qualified handle: the bundle path (the rule
-// file's directory relative to forja/, slash-separated) plus the name. Rules in
+// file's directory relative to .forja/, slash-separated) plus the name. Rules in
 // the root rules.yml / rules.local.yml have an empty bundle, so their handle is
 // just the name — which keeps pre-bundle status.json entries valid without any
 // migration.

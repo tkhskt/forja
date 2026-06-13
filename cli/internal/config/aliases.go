@@ -1,4 +1,4 @@
-// aliases.go owns the on-disk shape of forja/aliases.local.yml — a personal
+// aliases.go owns the on-disk shape of .forja/aliases.local.yml — a personal
 // (intended to be gitignored) map of short alias names to fully-qualified
 // Android applicationIds. Anywhere a forja CLI flag accepts an `--app`, the
 // value is first passed through this map; missing entries fall through to
@@ -15,8 +15,8 @@ import (
 )
 
 // DefaultAliasesPath is the on-disk location of the alias map, relative to
-// cwd. Sibling to forja/rules.yml.
-const DefaultAliasesPath = "forja/aliases.local.yml"
+// cwd. Sibling to .forja/rules.yml.
+const DefaultAliasesPath = DefaultDir + "/aliases.local.yml"
 
 // Aliases is the parsed alias map. Keys are short names ("dev", "staging");
 // values are the full Android applicationIds they expand to.
@@ -25,7 +25,7 @@ const DefaultAliasesPath = "forja/aliases.local.yml"
 // self-documenting and we can add per-entry metadata later without breaking
 // existing files:
 //
-//	# forja/aliases.local.yml
+//	# .forja/aliases.local.yml
 //	aliases:
 //	  dev: com.tkhskt.forja.sample
 //	  staging: com.tkhskt.forja.sample.staging

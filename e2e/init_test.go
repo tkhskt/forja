@@ -20,14 +20,14 @@ import (
 // recommended .gitignore entries.
 func TestInitHappyPath(t *testing.T) {
 	// Wipe but do NOT call init — we want to drive it ourselves.
-	_ = os.RemoveAll(filepath.Join(repoRoot, "forja"))
+	_ = os.RemoveAll(filepath.Join(repoRoot, ".forja"))
 
 	out := runForja(t, "init")
 
-	if _, err := os.Stat(filepath.Join(repoRoot, "forja")); err != nil {
-		t.Fatalf("forja/ should exist after init: %v", err)
+	if _, err := os.Stat(filepath.Join(repoRoot, ".forja")); err != nil {
+		t.Fatalf(".forja/ should exist after init: %v", err)
 	}
-	rulesPath := filepath.Join(repoRoot, "forja", "rules.yml")
+	rulesPath := filepath.Join(repoRoot, ".forja", "rules.yml")
 	data, err := os.ReadFile(rulesPath)
 	if err != nil {
 		t.Fatalf("read rules.yml: %v", err)
@@ -36,10 +36,10 @@ func TestInitHappyPath(t *testing.T) {
 		t.Errorf("rules.yml should embed schema documentation; got:\n%s", data)
 	}
 	for _, want := range []string{
-		"initialized forja/rules.yml",
+		"initialized .forja/rules.yml",
 		".gitignore",
-		"forja/rules.local.yml",
-		"forja/status.json",
+		".forja/rules.local.yml",
+		".forja/status.json",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("init output should mention %q:\n%s", want, out)
@@ -62,7 +62,7 @@ func TestInitHappyPath(t *testing.T) {
 // runInit() directly; this confirms the wired binary surfaces the same
 // guarantee through cobra.
 func TestInitRefusesReInit(t *testing.T) {
-	_ = os.RemoveAll(filepath.Join(repoRoot, "forja"))
+	_ = os.RemoveAll(filepath.Join(repoRoot, ".forja"))
 	runForja(t, "init")
 	out, err := runForjaAllowingFailure(t, "init")
 	if err == nil {
@@ -82,7 +82,7 @@ func TestInitRefusesReInit(t *testing.T) {
 // new command without requireForjaDir will fail this test (intentional —
 // keeps the contract enforced as the cmd surface grows).
 func TestInitRequiredBeforeOtherCommands(t *testing.T) {
-	_ = os.RemoveAll(filepath.Join(repoRoot, "forja"))
+	_ = os.RemoveAll(filepath.Join(repoRoot, ".forja"))
 
 	cases := [][]string{
 		{"rules", "add", "x", "--host", "127.0.0.1", "--status", "418"},
@@ -99,7 +99,7 @@ func TestInitRequiredBeforeOtherCommands(t *testing.T) {
 	for _, args := range cases {
 		// Re-wipe before each case so a prior command (if it somehow
 		// succeeded by mistake) can't leak a forja/ into the next case.
-		_ = os.RemoveAll(filepath.Join(repoRoot, "forja"))
+		_ = os.RemoveAll(filepath.Join(repoRoot, ".forja"))
 
 		out, err := runForjaAllowingFailure(t, args...)
 		if err == nil {

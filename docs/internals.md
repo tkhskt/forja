@@ -6,7 +6,7 @@ When forja pushes to a device (via `forja apply`, the `rules` TUI's save action,
 
 1. For each target app, check whether the app is running (`pidof <app>`)
 2. If the PID differs from the cached one, the app was restarted, so re-attach the agent via `adb shell cmd activity attach-agent`
-3. Merge `forja/rules.yml` + `rules.local.yml`, filter by `status.json[app].enabled`, convert to device JSON, and write it to `/data/data/<app>/files/rules.json`
+3. Merge `.forja/rules.yml` + `rules.local.yml`, filter by `status.json[app].enabled`, convert to device JSON, and write it to `/data/data/<app>/files/rules.json`
 
 The agent (`libforja-agent.so` + `agent-bundle.dex`) at attach time:
 

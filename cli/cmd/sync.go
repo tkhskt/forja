@@ -13,7 +13,7 @@ import (
 // set to every app that already has a status.json entry (or just one
 // when --app is given).
 //
-// The intended workflow is: hand-edit forja/rules.yml or rules.local.yml
+// The intended workflow is: hand-edit .forja/rules.yml or rules.local.yml
 // (tweak a body, change a status code, add a header), then run `forja sync`
 // to propagate the change to the device(s) that already have the affected
 // rules enabled. Without `sync`, hand edits only take effect on the next
@@ -27,7 +27,7 @@ func newSyncCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "sync [--app APP]",
 		Short: "Re-push the current effective rule set to every enabled app (or one)",
-		Long: `forja sync re-reads forja/rules.yml + rules.local.yml + status.json and
+		Long: `forja sync re-reads .forja/rules.yml + rules.local.yml + status.json and
 pushes the resulting effective rule set to every app that already has a
 status.json entry. Use this after hand-editing the yml to make the change
 visible on the device.

@@ -28,7 +28,7 @@ type rulesFlags struct {
 	body     string
 	bodyFile string
 	headers  []string
-	local    bool // --local = target personal scope (forja/rules.local.yml). default = project (forja/rules.yml).
+	local    bool // --local = target personal scope (.forja/rules.local.yml). default = project (.forja/rules.yml).
 }
 
 func bindRulesFlags(cmd *cobra.Command, f *rulesFlags) {
@@ -48,11 +48,11 @@ func bindRulesFlags(cmd *cobra.Command, f *rulesFlags) {
 			"also drives the body's MIME type on the device (default application/json). "+
 			"On update, passing --header replaces the entire header map; pass --header '' to clear.")
 	cmd.Flags().BoolVar(&f.local, "local", false,
-		"target the local (personal) rules file (forja/rules.local.yml). Default is project scope (forja/rules.yml) — the team-shared catalog.")
+		"target the local (personal) rules file (.forja/rules.local.yml). Default is project scope (.forja/rules.yml) — the team-shared catalog.")
 }
 
 // rulesPaths resolves the Paths struct from the defaults. Paths are not
-// individually overridable from the CLI — to operate on a different forja/
+// individually overridable from the CLI — to operate on a different .forja/
 // directory, run forja from a different cwd.
 func rulesPaths() rules.Paths {
 	return rules.DefaultPaths()
@@ -119,16 +119,16 @@ func newRulesListCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "list",
 		Short: "List rules in the catalog (yml only — does not touch any device)",
-		Long: `List the merged rule catalog from forja/rules.yml (project) and
-forja/rules.local.yml (local). Rules render in the same order the OkHttp
+		Long: `List the merged rule catalog from .forja/rules.yml (project) and
+.forja/rules.local.yml (local). Rules render in the same order the OkHttp
 interceptor would scan them (local rules first, then project rules — the
 on-device match precedence) and are labeled by their handle —
 <bundle>/<name>, or just <name> for rules in the root rules.yml. The catalog
 spans the root files plus any rules.yml / rules.local.yml in bundle
-subdirectories under forja/.
+subdirectories under .forja/.
 
 With --app, each rule line is prefixed with [on] / [off] to show whether
-it's currently enabled for that app per forja/status.json. Without --app,
+it's currently enabled for that app per .forja/status.json. Without --app,
 only catalog data is shown.
 
   forja rules list
@@ -258,8 +258,8 @@ func newRulesAddCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "add NAME",
 		Short: "Append a rule to the catalog (yml only — does not touch any device)",
-		Long: `Append a new rule to forja/rules.yml (project scope, committed) by
-default — pass --local to append to forja/rules.local.yml (your personal
+		Long: `Append a new rule to .forja/rules.yml (project scope, committed) by
+default — pass --local to append to .forja/rules.local.yml (your personal
 gitignored override file) instead.
 
 The newly added rule is NOT applied to any app. To turn it on, run
@@ -304,14 +304,14 @@ The newly added rule is NOT applied to any app. To turn it on, run
 			}
 			where := scope.String() + " scope"
 			if dir != "" {
-				where = filepath.ToSlash(filepath.Join("forja", dir))
+				where = filepath.ToSlash(filepath.Join(config.DefaultDir, dir))
 			}
 			fmt.Printf("added rule %q to %s\n", args[0], where)
 			return nil
 		},
 	}
 	bindRulesFlags(c, &f)
-	c.Flags().StringVar(&dir, "dir", "", "write the rule into forja/<dir>/rules.yml (a shareable bundle directory) instead of the root rules.yml")
+	c.Flags().StringVar(&dir, "dir", "", "write the rule into .forja/<dir>/rules.yml (a shareable bundle directory) instead of the root rules.yml")
 	return c
 }
 

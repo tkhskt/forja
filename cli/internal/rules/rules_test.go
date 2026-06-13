@@ -11,14 +11,14 @@ import (
 )
 
 // pathsIn returns a Paths struct rooted under a fresh tempdir, mirroring the
-// production forja/ layout. The forja/ subdirectory is created up front to
+// production .forja/ layout. The .forja/ subdirectory is created up front to
 // match the post-`forja init` state — production Save/SaveStatus/SaveAliases
 // no longer mkdir on demand (the cmd-layer requireForjaDir preflight is the
 // authoritative gate for directory existence).
 func pathsIn(t *testing.T) Paths {
 	t.Helper()
 	dir := t.TempDir()
-	forjaDir := filepath.Join(dir, "forja")
+	forjaDir := filepath.Join(dir, config.DefaultDir)
 	if err := os.MkdirAll(forjaDir, 0o755); err != nil {
 		t.Fatalf("setup forja dir: %v", err)
 	}

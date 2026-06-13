@@ -41,12 +41,12 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ## Quick start
 
-Rule definitions and per-app on/off state live in a `forja/` directory at the root of your project. forja never creates that directory on its own — `forja init` is the one-time setup step.
+Rule definitions and per-app on/off state live in a `.forja/` directory at the root of your project. forja never creates that directory on its own — `forja init` is the one-time setup step.
 
 ### Basic workflow
 
 ```bash
-# 0. One-time setup: create forja/ + forja/rules.yml with a schema-commented
+# 0. One-time setup: create .forja/ + .forja/rules.yml with a schema-commented
 #    template (also prints the recommended .gitignore entries to add by hand).
 forja init
 
@@ -72,7 +72,7 @@ forja rules update mock-failure --status 502
 ### Hand-edit the yml, then sync to the device
 
 ```bash
-$EDITOR forja/rules.yml
+$EDITOR .forja/rules.yml
 forja sync
 ```
 
@@ -95,7 +95,7 @@ Rules are **session-scoped on the device**: kill the app and the rewrites disapp
 ## Docs
 
 - [`docs/install.md`](docs/install.md) — full install reference (macOS / Linux / Windows / from source) + bundle resolution order
-- [`docs/usage.md`](docs/usage.md) — complete command reference, rule schema (`forja/rules.yml`, `status.json`, aliases), recommended `.gitignore`, scope conflict resolution
+- [`docs/usage.md`](docs/usage.md) — complete command reference, rule schema (`.forja/rules.yml`, `status.json`, aliases), recommended `.gitignore`, scope conflict resolution
 - [`docs/internals.md`](docs/internals.md) — how the JVMTI attach + interceptor injection works, troubleshooting, module layout, release procedure, license check
 
 ## License

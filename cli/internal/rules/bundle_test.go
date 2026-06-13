@@ -9,7 +9,7 @@ import (
 	"github.com/tkhskt/forja/internal/config"
 )
 
-// writeBundleFile hand-authors a rule file under forja/ (mkdir -p + write).
+// writeBundleFile hand-authors a rule file under .forja/ (mkdir -p + write).
 func writeBundleFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -30,7 +30,7 @@ func findEff(eff []config.EffectiveRule, name string) *config.EffectiveRule {
 }
 
 // TestAddDirWritesBundle: `rules add --dir rules/hoge` writes
-// forja/rules/hoge/rules.yml (not the root file) and the rule is discoverable.
+// .forja/rules/hoge/rules.yml (not the root file) and the rule is discoverable.
 func TestAddDirWritesBundle(t *testing.T) {
 	p := pathsIn(t)
 	if err := Add(p, ScopeProject, AddOptions{Name: "boom", Status: 500, Dir: "rules/hoge"}); err != nil {
@@ -52,11 +52,11 @@ func TestAddDirWritesBundle(t *testing.T) {
 	}
 }
 
-// TestAddDirRejectsEscape: --dir cannot point outside forja/.
+// TestAddDirRejectsEscape: --dir cannot point outside .forja/.
 func TestAddDirRejectsEscape(t *testing.T) {
 	p := pathsIn(t)
 	err := Add(p, ScopeProject, AddOptions{Name: "x", Status: 500, Dir: "../escape"})
-	if err == nil || !strings.Contains(err.Error(), "inside forja/") {
+	if err == nil || !strings.Contains(err.Error(), "inside .forja/") {
 		t.Errorf("expected an escape error, got %v", err)
 	}
 }
