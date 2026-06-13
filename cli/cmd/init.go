@@ -54,7 +54,7 @@ const initialRulesYml = `# forja rule catalog. Hand-editable.
 // there's nothing to gitignore for it.
 var recommendedGitignoreEntries = []string{
 	config.DefaultLocalPath,
-	config.DefaultAliasesPath,
+	config.DefaultLocalAliasesPath,
 }
 
 func newInitCmd() *cobra.Command {

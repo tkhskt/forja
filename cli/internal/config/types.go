@@ -1,7 +1,8 @@
 // Package config defines forja's on-disk file formats — the rule catalog
 // (.forja/rules.yml + rules.local.yml), the per-package enabled state
-// (.forja/status.json), and the personal alias map (.forja/aliases.local.yml) —
-// and converts the catalog to the JSON format consumed by the on-device runtime.
+// (status.json, in the user cache), and the alias map (.forja/aliases.yml +
+// aliases.local.yml) — and converts the catalog to the JSON format consumed by
+// the on-device runtime.
 package config
 
 import (

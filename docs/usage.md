@@ -6,7 +6,8 @@ forja treats the current working directory as a single "project". The yml file i
 |---|---|---|---|---|
 | `.forja/rules.yml` | **project** | commit | rule catalog shared by the team | ✅ |
 | `.forja/rules.local.yml` | **local** | gitignore | personal rule catalog (overrides project) | ✅ |
-| `.forja/aliases.local.yml` | (personal) | gitignore | optional short-name map for `--app` | ✅ |
+| `.forja/aliases.yml` | **project** | commit | short-name map for `--app`, shared by the team | ✅ |
+| `.forja/aliases.local.yml` | **local** | gitignore | personal short-name map (overrides project) | ✅ |
 | `<cache>/forja/status/<project>.json` | (state) | — (outside repo) | **per-app** enabled state | ❌ CLI-managed |
 
 `.forja/` holds only authored content. The per-app enabled state (`status.json`) is machine-managed transient state, so it lives in the OS user cache (`~/Library/Caches/forja/status/` on macOS, `$XDG_CACHE_HOME/forja/status/` or `~/.cache/forja/status/` on Linux), keyed by the project's root path. It's never committed and there's nothing to gitignore for it. A pre-existing `.forja/status.json` from an older forja is migrated into the cache automatically on the next command.
@@ -99,16 +100,19 @@ Turns off every rewrite on the named app, so the app sees the original (real) re
 | `forja rules` | TUI: (1) list debuggable apps on the device → (2) pick one → (3) show the rule list with per-app toggles → q to push |
 | `forja rules --app X` | TUI: skip the picker and jump straight to the rule list for X |
 | `forja off --app X` | Turn off every rewrite on X (other apps untouched) |
-| `forja alias set NAME APP_ID` | Register a short name to use anywhere `--app` is accepted (writes to `.forja/aliases.local.yml` — a personal file you should gitignore) |
-| `forja alias rm NAME` | Delete an alias |
-| `forja alias list` | List registered aliases |
+| `forja alias set NAME APP_ID [--local]` | Register a short name to use anywhere `--app` is accepted. Defaults to **project** scope (`.forja/aliases.yml`, committed); pass `--local` for the personal file (`.forja/aliases.local.yml`, gitignore it) |
+| `forja alias rm NAME [--local]` | Delete an alias from the target scope (project by default, `--local` for the personal file) |
+| `forja alias list` | List registered aliases, grouped by scope |
+
+Aliases have the **same two scopes as rules**: project (`.forja/aliases.yml`, committed, shared by the team) and local (`.forja/aliases.local.yml`, gitignored, personal). `set` / `rm` default to project; pass `--local` for the personal file. The two are merged when resolving `--app`, with **local entries overriding project** ones of the same name.
 
 Every command that accepts `--app` **takes either an alias or a full applicationId**. Unknown inputs pass through as literal applicationIds, so things still work when no alias is set:
 
 ```bash
-forja alias set dev com.tkhskt.forja.sample
-forja apply --app dev --enable teapot         # "dev" resolves to com.tkhskt.forja.sample
-forja apply --app com.acme.plugin --enable y  # unknown alias → treated as a literal applicationId
+forja alias set dev com.tkhskt.forja.sample           # project scope (shared, committed)
+forja alias set dev com.tkhskt.forja.sample --local   # personal override on this machine
+forja apply --app dev --enable teapot                 # "dev" resolves to com.tkhskt.forja.sample
+forja apply --app com.acme.plugin --enable y          # unknown alias → treated as a literal applicationId
 ```
 
 ---

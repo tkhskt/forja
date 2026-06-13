@@ -23,10 +23,11 @@ func pathsIn(t *testing.T) Paths {
 		t.Fatalf("setup forja dir: %v", err)
 	}
 	return Paths{
-		Project: filepath.Join(forjaDir, "rules.yml"),
-		Local:   filepath.Join(forjaDir, "rules.local.yml"),
-		Status:  filepath.Join(forjaDir, "status.json"),
-		Aliases: filepath.Join(forjaDir, "aliases.local.yml"),
+		Project:      filepath.Join(forjaDir, "rules.yml"),
+		Local:        filepath.Join(forjaDir, "rules.local.yml"),
+		Status:       filepath.Join(forjaDir, "status.json"),
+		Aliases:      filepath.Join(forjaDir, "aliases.yml"),
+		AliasesLocal: filepath.Join(forjaDir, "aliases.local.yml"),
 	}
 }
 
@@ -604,7 +605,7 @@ func TestLoadStatusReturnsCurrentState(t *testing.T) {
 
 func TestResolveAliasExpandsAndPassesThrough(t *testing.T) {
 	p := pathsIn(t)
-	if err := SaveAliases(p, map[string]string{
+	if err := SaveAliasesScope(p, ScopeProject, map[string]string{
 		"dev": "com.tkhskt.forja.sample",
 	}); err != nil {
 		t.Fatal(err)
@@ -619,6 +620,52 @@ func TestResolveAliasExpandsAndPassesThrough(t *testing.T) {
 	// Empty input → empty.
 	if got, _ := ResolveAlias(p, ""); got != "" {
 		t.Errorf("empty input should be empty, got %q", got)
+	}
+}
+
+func TestAliasScopesMergeWithLocalOverride(t *testing.T) {
+	p := pathsIn(t)
+	if err := SaveAliasesScope(p, ScopeProject, map[string]string{
+		"dev":     "com.team.dev",
+		"staging": "com.team.staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveAliasesScope(p, ScopeLocal, map[string]string{
+		"dev":   "com.me.dev", // shadows the project "dev"
+		"extra": "com.me.extra",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Merged view: local wins on conflict, both scopes contribute.
+	merged, err := LoadAliases(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged["dev"] != "com.me.dev" {
+		t.Errorf("local should override project for dev, got %q", merged["dev"])
+	}
+	if merged["staging"] != "com.team.staging" || merged["extra"] != "com.me.extra" {
+		t.Errorf("merged map missing scoped entries: %+v", merged)
+	}
+
+	// Resolution goes through the merged map.
+	if got, _ := ResolveAlias(p, "dev"); got != "com.me.dev" {
+		t.Errorf("ResolveAlias(dev) = %q, want local override", got)
+	}
+	if got, _ := ResolveAlias(p, "staging"); got != "com.team.staging" {
+		t.Errorf("ResolveAlias(staging) = %q, want project value", got)
+	}
+
+	// Per-scope reads stay unmerged (each file keeps its own entries).
+	proj, _ := LoadAliasesScope(p, ScopeProject)
+	if proj["dev"] != "com.team.dev" || len(proj) != 2 {
+		t.Errorf("project scope file mutated unexpectedly: %+v", proj)
+	}
+	loc, _ := LoadAliasesScope(p, ScopeLocal)
+	if _, ok := loc["staging"]; ok {
+		t.Errorf("local scope file should not contain project-only entries: %+v", loc)
 	}
 }
 

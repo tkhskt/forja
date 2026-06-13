@@ -1,8 +1,11 @@
-// aliases.go owns the on-disk shape of .forja/aliases.local.yml — a personal
-// (intended to be gitignored) map of short alias names to fully-qualified
-// Android applicationIds. Anywhere a forja CLI flag accepts an `--app`, the
-// value is first passed through this map; missing entries fall through to
-// literal applicationIds so unaliased usage stays unchanged.
+// aliases.go owns the on-disk shape of the alias map — short alias names to
+// fully-qualified Android applicationIds. Like rules, aliases come in two
+// scopes: project (.forja/aliases.yml, committed, shared by the team) and local
+// (.forja/aliases.local.yml, gitignored, personal). The two are merged at
+// resolve time with local entries overriding project. Anywhere a forja CLI flag
+// accepts an `--app`, the value is first passed through the merged map; missing
+// entries fall through to literal applicationIds so unaliased usage stays
+// unchanged.
 package config
 
 import (
@@ -14,9 +17,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// DefaultAliasesPath is the on-disk location of the alias map, relative to
-// cwd. Sibling to .forja/rules.yml.
-const DefaultAliasesPath = DefaultDir + "/aliases.local.yml"
+// Alias file locations, relative to cwd. Siblings to the rules files and
+// mirroring their project/local scope split.
+const (
+	DefaultAliasesPath      = DefaultDir + "/aliases.yml"       // project scope (you should commit it)
+	DefaultLocalAliasesPath = DefaultDir + "/aliases.local.yml" // local scope (you should gitignore it)
+)
 
 // Aliases is the parsed alias map. Keys are short names ("dev", "staging");
 // values are the full Android applicationIds they expand to.
@@ -25,7 +31,7 @@ const DefaultAliasesPath = DefaultDir + "/aliases.local.yml"
 // self-documenting and we can add per-entry metadata later without breaking
 // existing files:
 //
-//	# .forja/aliases.local.yml
+//	# .forja/aliases.yml (or aliases.local.yml)
 //	aliases:
 //	  dev: com.tkhskt.forja.sample
 //	  staging: com.tkhskt.forja.sample.staging

@@ -55,11 +55,12 @@ func (s Scope) String() string {
 // Paths bundles the on-disk locations we read/write. Tests can construct a
 // Paths over t.TempDir() to avoid touching the real cwd.
 type Paths struct {
-	Project string // .forja/rules.yml (the root project file + add() default target)
-	Local   string // .forja/rules.local.yml (the root local file)
-	Status  string // user-cache status.json (per-project, machine-managed) — NOT under .forja/
-	Aliases string // .forja/aliases.local.yml
-	Dir     string // .forja/ root — recursively discovered for rules.yml / rules.local.yml
+	Project      string // .forja/rules.yml (the root project file + add() default target)
+	Local        string // .forja/rules.local.yml (the root local file)
+	Status       string // user-cache status.json (per-project, machine-managed) — NOT under .forja/
+	Aliases      string // .forja/aliases.yml (project scope)
+	AliasesLocal string // .forja/aliases.local.yml (local scope)
+	Dir          string // .forja/ root — recursively discovered for rules.yml / rules.local.yml
 }
 
 // DefaultPaths returns the production Paths: authored files relative to cwd
@@ -75,11 +76,12 @@ func DefaultPaths() (Paths, error) {
 	}
 	migrateLegacyStatus(status)
 	return Paths{
-		Project: config.DefaultPath,
-		Local:   config.DefaultLocalPath,
-		Status:  status,
-		Aliases: config.DefaultAliasesPath,
-		Dir:     config.DefaultDir,
+		Project:      config.DefaultPath,
+		Local:        config.DefaultLocalPath,
+		Status:       status,
+		Aliases:      config.DefaultAliasesPath,
+		AliasesLocal: config.DefaultLocalAliasesPath,
+		Dir:          config.DefaultDir,
 	}, nil
 }
 
@@ -154,30 +156,63 @@ func migrateLegacyStatus(cachePath string) {
 	_ = os.Remove(config.LegacyStatusPath)
 }
 
+// aliasPathFor returns the alias file path corresponding to the scope, mirroring
+// pathFor for rule files.
+func (p Paths) aliasPathFor(s Scope) string {
+	if s == ScopeLocal {
+		return p.AliasesLocal
+	}
+	return p.Aliases
+}
+
 // ResolveAlias takes a CLI-provided app value (could be a short alias or a
 // literal applicationId) and returns the literal applicationId. Missing
 // aliases pass through unchanged, so callers can always use the result as
-// "the app" without special-casing.
+// "the app" without special-casing. Resolution uses the merged (project +
+// local) map so an alias defined in either scope works.
 func ResolveAlias(paths Paths, input string) (string, error) {
 	if input == "" {
 		return "", nil
 	}
-	a, err := config.LoadAliases(paths.Aliases)
+	a, err := LoadAliases(paths)
 	if err != nil {
 		return "", err
 	}
 	return a.Resolve(input), nil
 }
 
-// LoadAliases is the convenience wrapper that callers use when they need the
-// whole alias map (e.g. for `forja alias list` or the TUI picker annotation).
+// LoadAliases returns the merged alias map (project overlaid by local, so a
+// personal alias wins over a same-named project alias). This is what callers
+// use when they need "the effective aliases" — resolution, `forja alias list`,
+// and the TUI picker annotation.
 func LoadAliases(paths Paths) (config.Aliases, error) {
-	return config.LoadAliases(paths.Aliases)
+	project, err := config.LoadAliases(paths.Aliases)
+	if err != nil {
+		return nil, err
+	}
+	local, err := config.LoadAliases(paths.AliasesLocal)
+	if err != nil {
+		return nil, err
+	}
+	merged := config.Aliases{}
+	for k, v := range project {
+		merged[k] = v
+	}
+	for k, v := range local {
+		merged[k] = v // local overrides project
+	}
+	return merged, nil
 }
 
-// SaveAliases writes the alias map back to disk.
-func SaveAliases(paths Paths, a config.Aliases) error {
-	return config.SaveAliases(paths.Aliases, a)
+// LoadAliasesScope returns the alias map for a single scope's file (no merge).
+// Used by `alias set` / `rm` / `list`, which operate on one file at a time.
+func LoadAliasesScope(paths Paths, scope Scope) (config.Aliases, error) {
+	return config.LoadAliases(paths.aliasPathFor(scope))
+}
+
+// SaveAliasesScope writes the alias map to a single scope's file.
+func SaveAliasesScope(paths Paths, scope Scope, a config.Aliases) error {
+	return config.SaveAliases(paths.aliasPathFor(scope), a)
 }
 
 // pathFor returns the rule-file path corresponding to the scope.
