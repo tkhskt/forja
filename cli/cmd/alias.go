@@ -41,7 +41,10 @@ func newAliasSetCmd() *cobra.Command {
 			if name == "" || app == "" {
 				return errors.New("alias name and applicationId must be non-empty")
 			}
-			paths := rulesPaths()
+			paths, err := rulesPaths()
+			if err != nil {
+				return err
+			}
 			a, err := rules.LoadAliases(paths)
 			if err != nil {
 				return err
@@ -65,7 +68,10 @@ func newAliasRmCmd() *cobra.Command {
 			if err := requireForjaDir(); err != nil {
 				return err
 			}
-			paths := rulesPaths()
+			paths, err := rulesPaths()
+			if err != nil {
+				return err
+			}
 			a, err := rules.LoadAliases(paths)
 			if err != nil {
 				return err
@@ -91,7 +97,10 @@ func newAliasListCmd() *cobra.Command {
 			if err := requireForjaDir(); err != nil {
 				return err
 			}
-			paths := rulesPaths()
+			paths, err := rulesPaths()
+			if err != nil {
+				return err
+			}
 			a, err := rules.LoadAliases(paths)
 			if err != nil {
 				return err

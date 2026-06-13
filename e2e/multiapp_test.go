@@ -2,8 +2,9 @@
 
 // Multi-debuggable-app tests. The fixture app exposes two flavors
 // (dev / staging) producing two applicationIds:
-//   com.tkhskt.forja.sample
-//   com.tkhskt.forja.sample.staging
+//
+//	com.tkhskt.forja.sample
+//	com.tkhskt.forja.sample.staging
 //
 // These tests confirm forja behaves correctly when multiple debuggable
 // apps are installed and running simultaneously: detection lists both,

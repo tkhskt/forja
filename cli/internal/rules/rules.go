@@ -12,6 +12,8 @@
 package rules
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -19,6 +21,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tkhskt/forja/internal/attach"
 	"github.com/tkhskt/forja/internal/config"
 )
 
@@ -54,20 +57,101 @@ func (s Scope) String() string {
 type Paths struct {
 	Project string // .forja/rules.yml (the root project file + add() default target)
 	Local   string // .forja/rules.local.yml (the root local file)
-	Status  string // .forja/status.json
+	Status  string // user-cache status.json (per-project, machine-managed) — NOT under .forja/
 	Aliases string // .forja/aliases.local.yml
 	Dir     string // .forja/ root — recursively discovered for rules.yml / rules.local.yml
 }
 
-// DefaultPaths returns the paths relative to cwd (.forja/rules.yml etc.).
-func DefaultPaths() Paths {
+// DefaultPaths returns the production Paths: authored files relative to cwd
+// (.forja/rules.yml etc.) plus the per-project status file in the user cache.
+// Computing the cache path can fail (no home dir, unreadable cwd), so this
+// returns an error rather than papering over a broken environment. The first
+// call also migrates a pre-cache .forja/status.json into the cache, so existing
+// projects keep their enabled state without any manual step.
+func DefaultPaths() (Paths, error) {
+	status, err := defaultStatusPath()
+	if err != nil {
+		return Paths{}, err
+	}
+	migrateLegacyStatus(status)
 	return Paths{
 		Project: config.DefaultPath,
 		Local:   config.DefaultLocalPath,
-		Status:  config.DefaultStatusPath,
+		Status:  status,
 		Aliases: config.DefaultAliasesPath,
 		Dir:     config.DefaultDir,
+	}, nil
+}
+
+// defaultStatusPath returns the per-project status file under the user cache:
+// <cache>/forja/status/<key>.json. status.json holds which rules are enabled
+// for which app — machine-managed transient state — so it lives in the cache
+// instead of polluting the authored .forja/ directory. The key namespaces the
+// file by project root so two checkouts don't clobber each other's state.
+func defaultStatusPath() (string, error) {
+	cacheDir, err := attach.DefaultDir() // platform user cache (~/Library/Caches/forja, ~/.cache/forja, …)
+	if err != nil {
+		return "", err
 	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve project root: %w", err)
+	}
+	abs, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", fmt.Errorf("resolve project root: %w", err)
+	}
+	return filepath.Join(cacheDir, "status", projectKey(abs)+".json"), nil
+}
+
+// projectKey derives a stable, filesystem-safe, per-project cache key from the
+// project root's absolute path: a sanitized basename for human debuggability
+// plus a short sha256 prefix of the full path for collision resistance (two
+// sibling dirs with the same basename get distinct keys).
+func projectKey(abs string) string {
+	sum := sha256.Sum256([]byte(abs))
+	short := hex.EncodeToString(sum[:])[:12]
+	base := sanitizeKeySegment(filepath.Base(abs))
+	if base == "" {
+		return short
+	}
+	return base + "-" + short
+}
+
+// sanitizeKeySegment keeps only characters that are safe and readable in a
+// filename, collapsing everything else to '-'. The sha256 suffix guarantees
+// uniqueness even when sanitization is lossy.
+func sanitizeKeySegment(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+// migrateLegacyStatus performs the one-time move of a pre-cache
+// .forja/status.json into the cache. It's best-effort and idempotent: if the
+// cache file already exists, or there's no legacy file, it does nothing. Errors
+// are swallowed because status is transient (re-derivable by re-enabling rules)
+// and a migration hiccup must never block an otherwise-valid command. The
+// legacy file is removed only after the cache copy is written successfully.
+func migrateLegacyStatus(cachePath string) {
+	if _, err := os.Stat(cachePath); err == nil {
+		return // cache already populated — nothing to migrate
+	}
+	st, err := config.LoadStatus(config.LegacyStatusPath)
+	if err != nil || len(st) == 0 {
+		return // no legacy state to carry over
+	}
+	if err := config.SaveStatus(cachePath, st); err != nil {
+		return // leave the legacy file in place; try again next run
+	}
+	_ = os.Remove(config.LegacyStatusPath)
 }
 
 // ResolveAlias takes a CLI-provided app value (could be a short alias or a

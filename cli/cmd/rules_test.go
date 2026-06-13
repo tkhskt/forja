@@ -113,10 +113,10 @@ func TestParseHeadersRejectsEmptyKey(t *testing.T) {
 
 func TestParseHeadersRejectsInvalidKeyChars(t *testing.T) {
 	cases := []string{
-		"X Name=v",      // space
-		"X:Name=v",      // colon
-		"X\tName=v",     // tab
-		"X\nName=v",     // newline
+		"X Name=v",  // space
+		"X:Name=v",  // colon
+		"X\tName=v", // tab
+		"X\nName=v", // newline
 	}
 	for _, in := range cases {
 		if _, err := parseHeaders([]string{in}); err == nil {
@@ -146,9 +146,9 @@ func TestParseHeadersRejectsCRLFInValue(t *testing.T) {
 // shouldn't be stricter than the runtime that has to ingest the value.
 func TestParseHeadersAcceptsBenignControlCharsInValue(t *testing.T) {
 	cases := []string{
-		"X-Foo=tab\there",     // HTAB is allowed in field-content per RFC 7230
-		"X-Foo=日本語",         // UTF-8 (technically out of spec but commonly accepted)
-		"X-Foo=spaces  here",  // multiple spaces
+		"X-Foo=tab\there",    // HTAB is allowed in field-content per RFC 7230
+		"X-Foo=日本語",          // UTF-8 (technically out of spec but commonly accepted)
+		"X-Foo=spaces  here", // multiple spaces
 	}
 	for _, in := range cases {
 		if _, err := parseHeaders([]string{in}); err != nil {
@@ -315,4 +315,3 @@ func TestFormatRuleLineFieldRendering(t *testing.T) {
 		})
 	}
 }
-

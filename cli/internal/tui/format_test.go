@@ -37,7 +37,7 @@ func TestFormatBodyPreviewMultibyteSafe(t *testing.T) {
 
 // TestFormatBodyPreviewEmptyStringRendersAsEmptyQuotes: an empty body is
 // the explicit "force empty body" case from the CLI / yml, and must be
-// rendered as `''` rather than nothing so users can distinguish "this
+// rendered as `”` rather than nothing so users can distinguish "this
 // rule clears the body" from "this rule doesn't touch the body".
 func TestFormatBodyPreviewEmptyStringRendersAsEmptyQuotes(t *testing.T) {
 	if got := FormatBodyPreview(""); got != "''" {
@@ -51,11 +51,11 @@ func TestFormatBodyPreviewEmptyStringRendersAsEmptyQuotes(t *testing.T) {
 // conflict with the surrounding `'...'` delimiters.
 func TestFormatBodyPreviewEscapesControlChars(t *testing.T) {
 	cases := map[string]string{
-		"a\nb":  `'a\nb'`,
-		"a\rb":  `'a\rb'`,
-		"a\tb":  `'a\tb'`,
-		`a'b`:   `'a\'b'`,
-		`a\b`:   `'a\\b'`,
+		"a\nb": `'a\nb'`,
+		"a\rb": `'a\rb'`,
+		"a\tb": `'a\tb'`,
+		`a'b`:  `'a\'b'`,
+		`a\b`:  `'a\\b'`,
 	}
 	for in, want := range cases {
 		if got := FormatBodyPreview(in); got != want {

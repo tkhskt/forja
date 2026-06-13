@@ -506,8 +506,9 @@ func TestToDeviceJSONEnabledOnly(t *testing.T) {
 // Partial-field rules: host-only, path-only, status-only must round-trip
 // through ToDeviceJSON without leaking empty strings into the device JSON.
 // (Empty fields would otherwise cause the runtime to fail every match since
-//  o.optStringOrNull("host") returns "" rather than null, and url.host != ""
-//  evaluates true.)
+//
+//	o.optStringOrNull("host") returns "" rather than null, and url.host != ""
+//	evaluates true.)
 func TestToDeviceJSONOmitsEmptyMatchFields(t *testing.T) {
 	rf := &RulesFile{Rules: []Rule{
 		{Name: "host-only", Enabled: true,

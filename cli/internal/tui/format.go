@@ -24,7 +24,7 @@ const BodyPreviewMaxRunes = 30
 // byte characters never get sliced in half) with a `... (N chars)` suffix.
 //
 // Callers pre-decide whether to render at all; an empty string is treated
-// as the explicit "force empty body" case and renders as `''` so that the
+// as the explicit "force empty body" case and renders as `”` so that the
 // distinction between "no body override" (caller doesn't invoke this) and
 // "empty body" stays visible.
 func FormatBodyPreview(s string) string {

@@ -14,6 +14,8 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -289,23 +291,65 @@ func maestroFlow(t *testing.T, name string) string {
 
 // --- forja state helpers -----------------------------------------------
 
-// resetForjaState wipes ./forja/ in repo root, removes the attach cache for
-// the given apps, then runs `forja init` to restore the canonical post-init
-// state. Production forja refuses to auto-create forja/ — calling init here
-// keeps every test starting from the same hermetic baseline (clean dir +
-// empty rules.yml) without each test having to remember the bootstrap step.
+// forjaCacheDir mirrors attach.DefaultDir: the OS user cache dir + "forja"
+// (~/Library/Caches/forja on macOS, $XDG_CACHE_HOME/forja or ~/.cache/forja on
+// Linux). The per-app attach state and the per-project status file both live
+// under here.
+func forjaCacheDir() string {
+	base, _ := os.UserCacheDir()
+	return filepath.Join(base, "forja")
+}
+
+// projectStatusPath mirrors rules.defaultStatusPath: status.json is machine-
+// managed state kept in the user cache (NOT under .forja/), at
+// <cache>/forja/status/<key>.json keyed by the forja project root. Every
+// runForja uses cmd.Dir = repoRoot, so the key is derived from repoRoot — the
+// same absolute path the CLI sees via os.Getwd(). The key formula is mirrored
+// from rules.projectKey by hand; if it drifts, these tests fail loudly (the
+// status file is read at the wrong path → looks empty).
+func projectStatusPath() string {
+	sum := sha256.Sum256([]byte(repoRoot))
+	short := hex.EncodeToString(sum[:])[:12]
+	base := sanitizeKeySegment(filepath.Base(repoRoot))
+	key := short
+	if base != "" {
+		key = base + "-" + short
+	}
+	return filepath.Join(forjaCacheDir(), "status", key+".json")
+}
+
+// sanitizeKeySegment mirrors rules.sanitizeKeySegment.
+func sanitizeKeySegment(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+// resetForjaState wipes ./.forja/ in repo root, removes the per-project status
+// cache and the attach cache for the given apps, then runs `forja init` to
+// restore the canonical post-init state. Production forja refuses to auto-create
+// .forja/ — calling init here keeps every test starting from the same hermetic
+// baseline (clean dir + empty rules.yml + no enabled state) without each test
+// having to remember the bootstrap step.
 func resetForjaState(t *testing.T, pkgs ...string) {
 	t.Helper()
 	_ = os.RemoveAll(filepath.Join(repoRoot, ".forja"))
-	home, _ := os.UserHomeDir()
-	cacheDir := filepath.Join(home, ".cache", "forja")
+	_ = os.Remove(projectStatusPath())
+	cacheDir := forjaCacheDir()
 	for _, pkg := range pkgs {
 		_ = os.Remove(filepath.Join(cacheDir, pkg+".json"))
 	}
 	runForja(t, "init")
 }
 
-// StatusJSON mirrors the on-disk shape of forja/status.json: a flat top-level
+// StatusJSON mirrors the on-disk shape of the cached status.json: a flat top-level
 // map of app → {"enabled": [...rule names]}. A rule is "on" for an app iff
 // its name appears in that app's enabled list (= absent means off).
 type StatusJSON map[string]struct {
@@ -326,14 +370,14 @@ func (s StatusJSON) IsEnabled(app, name string) bool {
 	return false
 }
 
-// readStatusJSON returns the parsed forja/status.json. Returns nil (empty
-// map) if the file doesn't exist. Top-level keys starting with `$` are
-// silently skipped — forja embeds a "$comment" metadata key warning users
-// that the file is CLI-managed, and that string value can't decode as
-// {Enabled []string}.
+// readStatusJSON returns the parsed status.json from the user cache (its new
+// home — it no longer lives under .forja/). Returns nil (empty map) if the
+// file doesn't exist. Top-level keys starting with `$` are silently skipped —
+// forja embeds a "$comment" metadata key warning users that the file is
+// CLI-managed, and that string value can't decode as {Enabled []string}.
 func readStatusJSON(t *testing.T) StatusJSON {
 	t.Helper()
-	path := filepath.Join(repoRoot, ".forja", "status.json")
+	path := projectStatusPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

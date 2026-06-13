@@ -44,7 +44,10 @@ catalog is split across two scopes for shareability:
 
   .forja/rules.yml         - project scope, committed, shared by the team
   .forja/rules.local.yml   - local scope, personal additions (gitignore it)
-  .forja/status.json       - per-rule enabled state (gitignore it)
+
+Per-rule enabled state is machine-managed and lives in the OS user cache
+(~/Library/Caches/forja on macOS, ~/.cache/forja on Linux), keyed by project —
+not under .forja/, so there's nothing extra to gitignore.
 
 The on-device copy is consumed and deleted by the agent so nothing persists
 across app process restarts.`,

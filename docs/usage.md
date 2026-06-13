@@ -1,13 +1,15 @@
 # Usage
 
-forja treats the current working directory as a single "project". The yml file is **the rule catalog** and `status.json` is **the per-app on/off state** — those two responsibilities live in separate files.
+forja treats the current working directory as a single "project". The yml file is **the rule catalog** and `status.json` is **the per-app on/off state** — those two responsibilities live in separate places: the catalog is authored under `.forja/`, while the state is machine-managed in the user cache.
 
 | File | Scope | Git | Role | Edit by hand? |
 |---|---|---|---|---|
 | `.forja/rules.yml` | **project** | commit | rule catalog shared by the team | ✅ |
 | `.forja/rules.local.yml` | **local** | gitignore | personal rule catalog (overrides project) | ✅ |
-| `.forja/status.json` | (state) | gitignore | **per-app** enabled state | ❌ CLI-managed |
 | `.forja/aliases.local.yml` | (personal) | gitignore | optional short-name map for `--app` | ✅ |
+| `<cache>/forja/status/<project>.json` | (state) | — (outside repo) | **per-app** enabled state | ❌ CLI-managed |
+
+`.forja/` holds only authored content. The per-app enabled state (`status.json`) is machine-managed transient state, so it lives in the OS user cache (`~/Library/Caches/forja/status/` on macOS, `$XDG_CACHE_HOME/forja/status/` or `~/.cache/forja/status/` on Linux), keyed by the project's root path. It's never committed and there's nothing to gitignore for it. A pre-existing `.forja/status.json` from an older forja is migrated into the cache automatically on the next command.
 
 The yml file holds no information about which app a rule targets, so the same rule can be reused across multiple apps (dev/staging variants, multiple apps in a monorepo, etc.).
 
@@ -308,7 +310,9 @@ Only **the first matching rule** in the array is applied (OkHttp interceptor sem
 
 ---
 
-### `.forja/status.json`
+### `status.json` (in the user cache)
+
+> **Location:** the OS user cache — `~/Library/Caches/forja/status/<project>.json` on macOS, `$XDG_CACHE_HOME/forja/status/<project>.json` (or `~/.cache/forja/status/<project>.json`) on Linux. It is **not** under `.forja/` — it's machine-managed transient state, keyed by the project's absolute root path so separate checkouts don't clobber each other. There's nothing to commit or gitignore. A `.forja/status.json` left over from an older forja is migrated here automatically on the next command.
 
 > **Don't edit this file by hand.** It's a CLI-managed mirror of what's currently pushed to each device. Manual edits won't reach the device and may be overwritten on the next `forja` invocation. The commands that write it are `forja apply`, the `rules` TUI's save action, `forja off`, and `forja rules remove`.
 >
@@ -337,8 +341,9 @@ The **per-app enabled rule list**, keyed by rule **handle**: "if a rule's handle
 forja does not edit `.gitignore` for you. When sharing across a team, add these lines yourself:
 
 ```gitignore
-# forja: don't commit personal rules / state / aliases
+# forja: don't commit personal rules / aliases
 .forja/rules.local.yml
-.forja/status.json
 .forja/aliases.local.yml
 ```
+
+(`status.json` is not listed — it lives in the user cache, outside the repo.)

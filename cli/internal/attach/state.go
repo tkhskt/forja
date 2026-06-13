@@ -1,7 +1,8 @@
 // Package attach maintains forja's lightweight notion of "have we already
 // pushed the JVMTI agent into this process?" without daemonizing.
 //
-// Approach: keep a per-app cache file in ~/.cache/forja/<app>.json that
+// Approach: keep a per-app cache file in the user cache dir (forja/<app>.json,
+// e.g. ~/Library/Caches/forja on macOS or ~/.cache/forja on Linux) that
 // records the PID and timestamp of the last successful attach. Before each
 // push, compare against `pidof <app>` — if the PID changed, the app process
 // was restarted and the agent went with it, so we re-attach. If the PID
@@ -54,17 +55,16 @@ type Cache struct {
 // created lazily on first Save.
 func NewCache(dir string) *Cache { return &Cache{dir: dir} }
 
-// DefaultDir returns ~/.cache/forja, honoring XDG_CACHE_HOME if set. Used by
-// production callers; tests should construct a Cache with a t.TempDir().
+// DefaultDir returns the platform-appropriate forja cache directory via Go's
+// os.UserCacheDir: ~/Library/Caches/forja on macOS, $XDG_CACHE_HOME/forja (or
+// ~/.cache/forja) on Linux, %LocalAppData%\forja on Windows. Used by production
+// callers; tests should construct a Cache with a t.TempDir().
 func DefaultDir() (string, error) {
-	if x := os.Getenv("XDG_CACHE_HOME"); x != "" {
-		return filepath.Join(x, "forja"), nil
-	}
-	home, err := os.UserHomeDir()
+	base, err := os.UserCacheDir()
 	if err != nil {
-		return "", fmt.Errorf("home dir: %w", err)
+		return "", fmt.Errorf("user cache dir: %w", err)
 	}
-	return filepath.Join(home, ".cache", "forja"), nil
+	return filepath.Join(base, "forja"), nil
 }
 
 // path returns the state-file path for a given app. applicationIds contain

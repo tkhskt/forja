@@ -13,14 +13,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Canonical paths under ./.forja/, relative to cwd. The directory is the
-// per-project root and forja never modifies these paths automatically — the
-// dir layout is part of the user's repo. Derived from DefaultDir so the
+// Canonical authored paths under ./.forja/, relative to cwd. The directory is
+// the per-project root and forja never modifies these paths automatically —
+// the dir layout is part of the user's repo. Derived from DefaultDir so the
 // directory name lives in exactly one place.
+//
+// Note: per-app enabled state (status.json) is machine-managed transient state
+// and deliberately does NOT live here — it's stored in the user cache, keyed by
+// project root (see rules.DefaultPaths). LegacyStatusPath is the pre-cache
+// location, kept only as the one-time migration source.
 const (
-	DefaultPath       = DefaultDir + "/rules.yml"       // project-scope rule definitions (you should commit it)
-	DefaultLocalPath  = DefaultDir + "/rules.local.yml" // local-scope rule definitions (you should gitignore it)
-	DefaultStatusPath = DefaultDir + "/status.json"     // per-(app, rule) enabled state (you should gitignore it)
+	DefaultPath      = DefaultDir + "/rules.yml"       // project-scope rule definitions (you should commit it)
+	DefaultLocalPath = DefaultDir + "/rules.local.yml" // local-scope rule definitions (you should gitignore it)
+	LegacyStatusPath = DefaultDir + "/status.json"     // pre-cache status.json location; migration source only
 )
 
 // Load reads a RulesFile from disk. If the file is missing it returns nil
@@ -279,8 +284,8 @@ func (s Status) EnabledFor(app string) []string {
 	return out
 }
 
-// LoadStatus reads .forja/status.json. Missing file returns an empty Status
-// (not nil) so callers can mutate without nil checks.
+// LoadStatus reads the status file at path. Missing file returns an empty
+// Status (not nil) so callers can mutate without nil checks.
 func LoadStatus(path string) (Status, error) {
 	s := Status{}
 	data, err := os.ReadFile(path)
@@ -297,8 +302,10 @@ func LoadStatus(path string) (Status, error) {
 }
 
 // SaveStatus writes the status to disk. JSON map key order is sorted by
-// encoding/json so the output is stable. The parent directory must already
-// exist — see the Save() comment for the directory-creation contract.
+// encoding/json so the output is stable. Unlike Save() (which never mkdirs, so
+// stray rule files can't materialize outside an initialized project), status is
+// machine-managed cache state, so SaveStatus creates its parent directory on
+// demand — the user-cache status dir is forja's to manage.
 func SaveStatus(path string, s Status) error {
 	if s == nil {
 		s = Status{}
@@ -308,6 +315,9 @@ func SaveStatus(path string, s Status) error {
 		return fmt.Errorf("marshal status: %w", err)
 	}
 	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create status dir: %w", err)
+	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}

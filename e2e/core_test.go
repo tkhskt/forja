@@ -207,7 +207,7 @@ appId: com.tkhskt.forja.sample
 `)
 }
 
-// TestCoreExplicitEmptyBody — --body '' forces the response body to be empty,
+// TestCoreExplicitEmptyBody — --body ” forces the response body to be empty,
 // distinct from omitting --body (which would leave the mock baseline body
 // intact). We can't easily assertNotVisible "the absence of a body", so we
 // rely on the sample app's logcat line that prints byte count:

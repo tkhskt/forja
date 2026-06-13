@@ -40,7 +40,10 @@ Only the named app is affected; other apps' state stays intact.`,
 			if err := eng.Off(context.Background(), app); err != nil {
 				return err
 			}
-			paths := rulesPaths()
+			paths, err := rulesPaths()
+			if err != nil {
+				return err
+			}
 			if err := rules.ClearApp(paths, app); err != nil {
 				return fmt.Errorf("update status.json: %w", err)
 			}

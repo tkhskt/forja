@@ -53,8 +53,9 @@ func bindRulesFlags(cmd *cobra.Command, f *rulesFlags) {
 
 // rulesPaths resolves the Paths struct from the defaults. Paths are not
 // individually overridable from the CLI — to operate on a different .forja/
-// directory, run forja from a different cwd.
-func rulesPaths() rules.Paths {
+// directory, run forja from a different cwd. It can error because the status
+// file path is resolved against the user cache (home dir / cwd lookup).
+func rulesPaths() (rules.Paths, error) {
 	return rules.DefaultPaths()
 }
 
@@ -76,7 +77,11 @@ func resolveApp(input string) (string, error) {
 	if input == "" {
 		return "", nil
 	}
-	return rules.ResolveAlias(rulesPaths(), input)
+	paths, err := rulesPaths()
+	if err != nil {
+		return "", err
+	}
+	return rules.ResolveAlias(paths, input)
 }
 
 func newRulesCmd() *cobra.Command {
@@ -139,7 +144,10 @@ only catalog data is shown.
 			if err := requireForjaDir(); err != nil {
 				return err
 			}
-			paths := rulesPaths()
+			paths, err := rulesPaths()
+			if err != nil {
+				return err
+			}
 			if app != "" {
 				resolved, err := resolveApp(app)
 				if err != nil {
@@ -298,7 +306,10 @@ The newly added rule is NOT applied to any app. To turn it on, run
 				Dir:      dir,
 			}
 			scope := scopeFrom(&f)
-			paths := rulesPaths()
+			paths, err := rulesPaths()
+			if err != nil {
+				return err
+			}
 			if err := rules.Add(paths, scope, opts); err != nil {
 				return err
 			}
@@ -373,7 +384,10 @@ bare name is ambiguous). --local is accepted for explicitness.
 				}
 				opts.Headers = &headers
 			}
-			paths := rulesPaths()
+			paths, err := rulesPaths()
+			if err != nil {
+				return err
+			}
 			var scopePtr *rules.Scope
 			if f.local {
 				s := rules.ScopeLocal
@@ -412,7 +426,10 @@ clears the rule name from every app's enabled list.`,
 			if err := requireForjaDir(); err != nil {
 				return err
 			}
-			paths := rulesPaths()
+			paths, err := rulesPaths()
+			if err != nil {
+				return err
+			}
 			var scopePtr *rules.Scope
 			if local {
 				s := rules.ScopeLocal
@@ -445,7 +462,10 @@ clears the rule name from every app's enabled list.`,
 // status.json, finds every app where the named rule is currently enabled, and
 // pushes the (now updated) effective rule set to each of them.
 func autoApplyToEnabledApps(name, opLabel string) error {
-	paths := rulesPaths()
+	paths, err := rulesPaths()
+	if err != nil {
+		return err
+	}
 	st, err := rules.LoadStatus(paths)
 	if err != nil {
 		return err
@@ -467,7 +487,10 @@ func pushToApps(apps []string, opLabel string) error {
 		fmt.Fprintf(os.Stderr, "[%s] engine init failed: %v\n", opLabel, err)
 		return nil
 	}
-	paths := rulesPaths()
+	paths, err := rulesPaths()
+	if err != nil {
+		return err
+	}
 	pushed := []string{}
 	skipped := []string{}
 	for _, app := range apps {
@@ -522,7 +545,10 @@ func pushToApp(app, opLabel string) error {
 // programs, which produced a visible flicker each time the alt screen was
 // torn down and re-entered between them.
 func runRulesTUI(app string) error {
-	paths := rulesPaths()
+	paths, err := rulesPaths()
+	if err != nil {
+		return err
+	}
 	if app != "" {
 		resolved, err := resolveApp(app)
 		if err != nil {

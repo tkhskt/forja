@@ -43,7 +43,10 @@ enabled use 'forja apply'; to clear an app use 'forja off'.`,
 			if err := requireForjaDir(); err != nil {
 				return err
 			}
-			paths := rulesPaths()
+			paths, err := rulesPaths()
+			if err != nil {
+				return err
+			}
 			st, err := rules.LoadStatus(paths)
 			if err != nil {
 				return err

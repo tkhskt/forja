@@ -48,9 +48,12 @@ const initialRulesYml = `# forja rule catalog. Hand-editable.
 // tool's (this is the convention followed by ESLint / Prettier / terraform /
 // tsc; project scaffolders like cargo new / gradle init do create one, but
 // forja is a config tool layered onto an existing project, not a scaffolder).
+//
+// status.json is intentionally absent: it no longer lives under .forja/ (it's
+// machine-managed cache state, kept in the user cache keyed by project), so
+// there's nothing to gitignore for it.
 var recommendedGitignoreEntries = []string{
 	config.DefaultLocalPath,
-	config.DefaultStatusPath,
 	config.DefaultAliasesPath,
 }
 

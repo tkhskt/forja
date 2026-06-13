@@ -39,7 +39,9 @@ func TestInitHappyPath(t *testing.T) {
 		"initialized .forja/rules.yml",
 		".gitignore",
 		".forja/rules.local.yml",
-		".forja/status.json",
+		// status.json is NOT recommended here — it lives in the user cache,
+		// not under .forja/, so there's nothing to gitignore for it.
+		".forja/aliases.local.yml",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("init output should mention %q:\n%s", want, out)

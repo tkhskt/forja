@@ -54,7 +54,10 @@ Unknown rule names in --enable cause an error (typo guard). Unknown names in
 				return err
 			}
 			app = resolvedApp
-			paths := rulesPaths()
+			paths, err := rulesPaths()
+			if err != nil {
+				return err
+			}
 			if len(enable) > 0 {
 				if err := rules.Enable(paths, app, enable); err != nil {
 					return err
