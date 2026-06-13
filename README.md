@@ -2,7 +2,7 @@
 
 A tool for rewriting OkHttp responses on Android apps **without rebuilding the app, without certificates, and without a proxy**.
 
-- Targets debuggable APKs (= debug builds)
+- Targets debuggable APKs
 - The app's source code is untouched
 - Rules disappear the moment the device process is killed (= session-scoped)
 - Distributed as a single Go binary
