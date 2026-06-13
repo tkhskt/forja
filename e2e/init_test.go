@@ -38,10 +38,12 @@ func TestInitHappyPath(t *testing.T) {
 	for _, want := range []string{
 		"initialized .forja/rules.yml",
 		".gitignore",
-		".forja/rules.local.yml",
-		// status.json is NOT recommended here — it lives in the user cache,
-		// not under .forja/, so there's nothing to gitignore for it.
-		".forja/aliases.local.yml",
+		// The two recognized personal-scope filenames, each with ** so
+		// bundle-level copies are caught. status.json is NOT recommended (user
+		// cache, not under .forja/), nor is .forja/local/ (a user's own choice
+		// to gitignore, not a forja path).
+		".forja/**/rules.local.yml",
+		".forja/**/aliases.local.yml",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("init output should mention %q:\n%s", want, out)

@@ -76,7 +76,7 @@ $EDITOR .forja/rules.yml
 forja sync
 ```
 
-`sync` re-reads the yml and pushes to every app already present in `status.json`, without changing which rules are enabled.
+`sync` re-reads the yml and pushes to every app that already has rules enabled, without changing which rules are on.
 
 See [the rule schema reference](docs/usage.md#rule-schema) for the full yml structure (`match:` / `response:` groups, `bodyFile:`, scope conflict resolution, etc.).
 
@@ -95,7 +95,7 @@ Rules are **session-scoped on the device**: kill the app and the rewrites disapp
 ## Docs
 
 - [`docs/install.md`](docs/install.md) — full install reference (macOS / Linux / Windows / from source) + bundle resolution order
-- [`docs/usage.md`](docs/usage.md) — complete command reference, rule schema (`.forja/rules.yml`, `status.json`, aliases), recommended `.gitignore`, scope conflict resolution
+- [`docs/usage.md`](docs/usage.md) — complete command reference, rule schema (`.forja/rules.yml` + bundles, aliases), recommended `.gitignore`, scope conflict resolution
 - [`docs/internals.md`](docs/internals.md) — how the JVMTI attach + interceptor injection works, troubleshooting, module layout, release procedure, license check
 
 ## License

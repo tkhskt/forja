@@ -42,19 +42,29 @@ const initialRulesYml = `# forja rule catalog. Hand-editable.
 #   https://github.com/tkhskt/forja/blob/main/docs/usage.md#rule-schema
 `
 
-// recommendedGitignoreEntries lists the files inside .forja/ that should be
-// kept out of version control. init prints these as a suggestion instead of
-// editing .gitignore directly — VCS hygiene is the user's call, not the
-// tool's (this is the convention followed by ESLint / Prettier / terraform /
+// recommendedGitignoreEntries lists the patterns that keep personal content
+// inside .forja/ out of version control. init prints these as a suggestion
+// instead of editing .gitignore directly — VCS hygiene is the user's call, not
+// the tool's (this is the convention followed by ESLint / Prettier / terraform /
 // tsc; project scaffolders like cargo new / gradle init do create one, but
 // forja is a config tool layered onto an existing project, not a scaffolder).
+//
+// We list the two personal-scope filenames forja actually recognizes —
+// rules.local.yml and aliases.local.yml — each with a `**` so bundle-level
+// copies (e.g. .forja/payments/rules.local.yml) are caught too, which a flat
+// list of root files would miss. Naming the files explicitly (rather than a
+// blanket *.local.yml) keeps the intent readable and avoids sweeping up an
+// unrelated file a user happens to name foo.local.yml. Users who prefer to keep
+// personal rules in a gitignored directory of their own can do so freely (any
+// subdirectory is discovered as a bundle), but that's their choice to ignore,
+// not a path forja blesses, so we don't list it.
 //
 // status.json is intentionally absent: it no longer lives under .forja/ (it's
 // machine-managed cache state, kept in the user cache keyed by project), so
 // there's nothing to gitignore for it.
 var recommendedGitignoreEntries = []string{
-	config.DefaultLocalPath,
-	config.DefaultLocalAliasesPath,
+	config.DefaultDir + "/**/" + config.RuleLocalFileName,
+	config.DefaultDir + "/**/aliases.local.yml",
 }
 
 func newInitCmd() *cobra.Command {

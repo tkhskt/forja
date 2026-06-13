@@ -346,8 +346,12 @@ forja does not edit `.gitignore` for you. When sharing across a team, add these 
 
 ```gitignore
 # forja: don't commit personal rules / aliases
-.forja/rules.local.yml
-.forja/aliases.local.yml
+.forja/**/rules.local.yml
+.forja/**/aliases.local.yml
 ```
 
-(`status.json` is not listed — it lives in the user cache, outside the repo.)
+These are the two personal-scope filenames forja recognizes, each with a `**` so bundle-level copies are caught too — a flat list of just the root files would silently miss `.forja/payments/rules.local.yml`. (Naming the files explicitly, rather than a blanket `*.local.yml`, also avoids sweeping up an unrelated file you happen to name `foo.local.yml`.)
+
+If you'd rather keep all your personal rules in one place, remember that **any subdirectory is discovered as a bundle** — so you can make, say, a `.forja/local/` directory and gitignore it yourself. forja doesn't treat that path specially; it's just a bundle you choose not to commit, so it's up to you to add it to `.gitignore`.
+
+(`status.json` is **not** listed — it lives in the user cache, outside the repo.)
