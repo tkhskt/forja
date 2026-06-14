@@ -65,9 +65,8 @@ constexpr const char* kBootstrapDesc  = "Lcom/tkhskt/forja/agent/Bootstrap;";
 constexpr const char* kWrapMethod     = "wrapInterceptors";
 
 // All const-after-init — only Agent_OnAttach writes to them.
-JavaVM*   gVm                 = nullptr;
-jvmtiEnv* gJvmti              = nullptr;
-jobject   gAppLoaderGlobalRef = nullptr;   // app PathClassLoader (global ref)
+JavaVM*   gVm    = nullptr;
+jvmtiEnv* gJvmti = nullptr;
 
 // --- Exception-checking helpers ----------------------------------------
 
@@ -424,7 +423,6 @@ jint InitAgent(JavaVM* vm, const char* options) {
         LOGE("could not resolve app ClassLoader (ActivityThread reflection)");
         return JNI_ERR;
     }
-    gAppLoaderGlobalRef = env->NewGlobalRef(appLoader);
 
     // 2) Pick the optimized-dex location (the app's codeCacheDir).
     const std::string optDir = GetCodeCacheDir(env);
