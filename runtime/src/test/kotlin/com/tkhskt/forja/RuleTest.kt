@@ -103,6 +103,42 @@ class RuleTest {
         assertFalse(r.matches(buildResponse(url = "https://other.com/x")))
     }
 
+    @Test
+    fun matches_pathWildcard_middleSegment() {
+        val r = rule(path = "/users/*/posts")
+        assertTrue(r.matches(buildResponse(url = "https://e.com/users/42/posts")))
+        assertTrue(r.matches(buildResponse(url = "https://e.com/users/abc/posts")))
+        // unanchored, like the substring case: extra leading/trailing is fine
+        assertTrue(r.matches(buildResponse(url = "https://e.com/api/users/7/posts/recent")))
+        // the id slot must not span a '/' separator
+        assertFalse(r.matches(buildResponse(url = "https://e.com/users/42/extra/posts")))
+        // a different second segment doesn't match
+        assertFalse(r.matches(buildResponse(url = "https://e.com/users/42/comments")))
+    }
+
+    @Test
+    fun matches_pathWildcard_trailing() {
+        val r = rule(path = "/users/*")
+        assertTrue(r.matches(buildResponse(url = "https://e.com/users/42")))
+        assertTrue(r.matches(buildResponse(url = "https://e.com/users/")))
+        assertFalse(r.matches(buildResponse(url = "https://e.com/accounts/42")))
+    }
+
+    @Test
+    fun matches_pathWildcard_dotIsLiteralNotRegex() {
+        // '.' in the pattern must match a literal dot, not "any char"
+        val r = rule(path = "/v1.0/*/items")
+        assertTrue(r.matches(buildResponse(url = "https://e.com/v1.0/9/items")))
+        assertFalse(r.matches(buildResponse(url = "https://e.com/v1x0/9/items")))
+    }
+
+    @Test
+    fun matches_pathWithoutWildcard_staysSubstring() {
+        // no '*' → unchanged substring semantics
+        val r = rule(path = "/foo")
+        assertTrue(r.matches(buildResponse(url = "https://e.com/a/foo/b")))
+    }
+
     // ---- applyTo() -----------------------------------------------------
 
     @Test

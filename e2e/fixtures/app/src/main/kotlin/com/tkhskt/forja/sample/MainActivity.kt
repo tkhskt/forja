@@ -15,11 +15,15 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 // The e2e harness runs an in-process mock server and bridges it to the device
-// with `adb reverse tcp:8080`, so this fixed loopback URL hits a deterministic
+// with `adb reverse tcp:8080`, so this fixed loopback base hits a deterministic
 // baseline (HTTP 200) with no external network dependency — fast and
 // reproducible. forja rewrites the response anyway, so the baseline shape
 // doesn't matter. (Cleartext to 127.0.0.1 is allowed via usesCleartextTraffic.)
-private const val URL = "http://127.0.0.1:8080/"
+private const val BASE_URL = "http://127.0.0.1:8080"
+// The request path is overridable via an `am start ... --es path <path>` extra
+// so path-matching tests (e.g. wildcards) can drive an arbitrary endpoint like
+// /users/42/posts. Defaults to "/" so every existing flow is unchanged.
+private const val EXTRA_PATH = "path"
 private const val TAG = "SampleApp"
 
 /**
@@ -44,9 +48,17 @@ class MainActivity : Activity() {
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
+    // Resolved once in onCreate from the launch intent's `path` extra (default
+    // "/"). A force-stop + relaunch with a different extra picks up a new path.
+    private lateinit var requestUrl: String
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        val path = intent?.getStringExtra(EXTRA_PATH) ?: "/"
+        requestUrl = BASE_URL + path
+        Log.i(TAG, "request URL: $requestUrl")
 
         val output = findViewById<TextView>(R.id.output)
 
@@ -63,13 +75,13 @@ class MainActivity : Activity() {
      * scenarios A and B drive the same UI path without any branching.
      */
     private fun fetch(output: TextView, label: String, clientProvider: () -> OkHttpClient) {
-        output.text = "[$label] fetching $URL ..."
+        output.text = "[$label] fetching $requestUrl ..."
         scope.launch {
             val text = runCatching {
                 withContext(Dispatchers.IO) {
                     val client = clientProvider()
                     Log.i(TAG, "[$label] using client $client")
-                    val req = Request.Builder().url(URL).build()
+                    val req = Request.Builder().url(requestUrl).build()
                     client.newCall(req).execute().use { resp ->
                         val body = resp.body?.string().orEmpty()
                         Log.i(TAG, "[$label] HTTP ${resp.code} (${body.length} bytes)")

@@ -124,6 +124,8 @@ CLI flags stay flat; forja distributes them into the yml's `match:` / `response:
 ```
 --host       match: exact HTTP host           (→ match.host)
 --path       match: substring of encoded path (→ match.path)
+             a `*` makes it a glob — each `*` matches one path segment
+             (any run of non-'/' chars), e.g. /users/*/posts
 --status     response: HTTP status code       (→ response.status)
 --body       response: inline body            (→ response.body — JSON-object-looking
              strings become bodyObject on the wire, everything else is sent raw.
@@ -291,7 +293,7 @@ So `big-response` above reads `.forja/responses/heavy.json`. Handy when you don'
 | Field | Purpose |
 |---|---|
 | `host` | Exact host match |
-| `path` | Substring of encoded path |
+| `path` | Substring of encoded path; a `*` makes it a glob (each `*` matches one path segment, i.e. any run of non-`/` chars), e.g. `/users/*/posts` |
 
 `response:`
 

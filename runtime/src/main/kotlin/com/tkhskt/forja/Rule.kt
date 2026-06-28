@@ -14,18 +14,32 @@ data class Rule(
     val enabled: Boolean,
     // --- match conditions ---
     val host: String?,        // exact host match
-    val path: String?,        // substring of encodedPath
+    val path: String?,        // encodedPath matcher: plain substring, or a glob when it contains `*`
     // --- replacement payload ---
     val status: Int?,
     val message: String?,
     val headers: Map<String, String>,
     val body: String?
 ) {
+    // Precompiled matcher for `path`. When the pattern contains a `*`
+    // wildcard it is compiled to a regex (each `*` matches one path segment,
+    // i.e. any run of characters except '/') and matched unanchored, mirroring
+    // the looseness of the plain-substring case. When there is no `*` this is
+    // null and matches() falls back to a plain substring check.
+    private val pathRegex: Regex? = path?.let(::compileGlobPath)
+
     fun matches(response: Response): Boolean {
         if (!enabled) return false
         val url = response.request.url
         if (host != null && url.host != host) return false
-        if (path != null && !url.encodedPath.contains(path)) return false
+        if (path != null) {
+            val regex = pathRegex
+            if (regex != null) {
+                if (!regex.containsMatchIn(url.encodedPath)) return false
+            } else if (!url.encodedPath.contains(path)) {
+                return false
+            }
+        }
         return true
     }
 
@@ -46,6 +60,19 @@ data class Rule(
     }
 
     companion object {
+        /**
+         * Compiles a `path` pattern to a [Regex], or returns null when the
+         * pattern has no `*` wildcard (in which case callers use a plain
+         * substring match). Each `*` becomes `[^/]*` — one path segment —
+         * and every other character is matched literally, so regex
+         * metacharacters in the path (`.`, `+`, `(`, …) are never special.
+         */
+        private fun compileGlobPath(pattern: String): Regex? {
+            if (!pattern.contains('*')) return null
+            val regex = pattern.split("*").joinToString("[^/]*") { Regex.escape(it) }
+            return Regex(regex)
+        }
+
         fun parseList(text: String): List<Rule> {
             val arr = JSONArray(text)
             return (0 until arr.length()).map { i ->

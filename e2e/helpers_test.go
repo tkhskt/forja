@@ -166,7 +166,21 @@ const MainActivityFQN = "com.tkhskt.forja.sample.MainActivity"
 
 func startMainActivity(t *testing.T, pkg string) {
 	t.Helper()
-	_, _ = adbShellAllowingFailure(t, fmt.Sprintf("am start -n %s/%s", pkg, MainActivityFQN))
+	startMainActivityWithPath(t, pkg, "")
+}
+
+// startMainActivityWithPath launches MainActivity, optionally overriding the
+// request path via the `path` intent extra. An empty path leaves the extra off
+// so the fixture uses its default ("/"), keeping every existing caller's
+// behavior unchanged. Used by path-matching tests (e.g. wildcards) to drive an
+// arbitrary endpoint like /users/42/posts.
+func startMainActivityWithPath(t *testing.T, pkg, path string) {
+	t.Helper()
+	line := fmt.Sprintf("am start -n %s/%s", pkg, MainActivityFQN)
+	if path != "" {
+		line += fmt.Sprintf(" --es path '%s'", path)
+	}
+	_, _ = adbShellAllowingFailure(t, line)
 	// Wait for a *stable* PID. A bare "pidof > 0" was the original gate, but
 	// occasionally Android reports a PID for a process that's still in the
 	// middle of its launch sequence and gets killed milliseconds later by
@@ -500,6 +514,19 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "build agent bundle: %v\n", err)
 		os.Exit(2)
 	}
+
+	// 2.5) Pin forja to the *freshly built* bundle. Without this, forja's
+	// ResolveBundleDir prefers an installed bundle ($HOME/.local/share/forja/
+	// agent, etc.) over the repo build output — so on a machine where forja is
+	// installed, e2e would silently push a STALE agent dex and test behavior
+	// that no longer matches the source under test. FORJA_BUNDLE_DIR is the
+	// highest-priority candidate, so this makes the suite hermetic.
+	bundleDir := filepath.Join(repoRoot, "jvmti-agent", "build", "outputs", "agent")
+	if err := os.Setenv("FORJA_BUNDLE_DIR", bundleDir); err != nil {
+		fmt.Fprintf(os.Stderr, "set FORJA_BUNDLE_DIR: %v\n", err)
+		os.Exit(2)
+	}
+	fmt.Fprintf(os.Stderr, "[e2e] FORJA_BUNDLE_DIR=%s\n", bundleDir)
 
 	// 3) Boot the emulator (or borrow an existing device).
 	if err := setupEmulator(); err != nil {

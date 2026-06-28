@@ -30,7 +30,7 @@ const initialRulesYml = `# forja rule catalog. Hand-editable.
 #   - name: example-mock
 #     match:
 #       host: example.com           # exact host match
-#       path: /api/v2/widgets       # substring of encoded path
+#       path: /api/v2/widgets       # substring of encoded path; * = one-segment glob (e.g. /users/*/posts)
 #     response:
 #       status: 200
 #       body: '{"ok":true}'          # inline body (any string scalar)
