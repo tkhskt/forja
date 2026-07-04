@@ -268,10 +268,13 @@ func TestStatusPerPkgRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "sub", "status.json")
-	orig := Status{
-		"com.a": {Enabled: []string{"foo", "bar"}},
-		"com.b": {Enabled: []string{"foo"}},
-		"com.c": {Enabled: []string{}}, // touched but currently off
+	const serial = "emulator-5554"
+	orig := DeviceStatuses{
+		serial: {
+			"com.a": {Enabled: []string{"foo", "bar"}},
+			"com.b": {Enabled: []string{"foo"}},
+			"com.c": {Enabled: []string{}}, // empty → pruned on save
+		},
 	}
 	if err := SaveStatus(path, orig); err != nil {
 		t.Fatalf("SaveStatus: %v", err)
@@ -280,17 +283,18 @@ func TestStatusPerPkgRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadStatus: %v", err)
 	}
-	if !back.IsEnabled("com.a", "foo") || !back.IsEnabled("com.a", "bar") {
+	dev := back[serial]
+	if !dev.IsEnabled("com.a", "foo") || !dev.IsEnabled("com.a", "bar") {
 		t.Errorf("com.a entries lost: %+v", back)
 	}
-	if !back.IsEnabled("com.b", "foo") {
+	if !dev.IsEnabled("com.b", "foo") {
 		t.Errorf("com.b/foo lost: %+v", back)
 	}
-	if back.IsEnabled("com.b", "bar") {
+	if dev.IsEnabled("com.b", "bar") {
 		t.Errorf("com.b/bar should not be enabled: %+v", back)
 	}
-	if back.IsEnabled("com.c", "anything") {
-		t.Errorf("com.c is empty list — should report disabled: %+v", back)
+	if _, ok := dev["com.c"]; ok {
+		t.Errorf("com.c had an empty list — should be pruned on save, but survived: %+v", dev)
 	}
 }
 
@@ -365,9 +369,10 @@ func TestStatusClearAppKeepsKey(t *testing.T) {
 func TestStatusJSONEmbedsCommentAtTop(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "status.json")
-	orig := Status{
-		"com.a": {Enabled: []string{"rule-1"}},
-		"com.b": {Enabled: []string{}},
+	orig := DeviceStatuses{
+		"emulator-5554": {
+			"com.a": {Enabled: []string{"rule-1"}},
+		},
 	}
 	if err := SaveStatus(path, orig); err != nil {
 		t.Fatalf("SaveStatus: %v", err)
@@ -383,13 +388,11 @@ func TestStatusJSONEmbedsCommentAtTop(t *testing.T) {
 	if !strings.Contains(body, "DO NOT EDIT") {
 		t.Errorf("expected a do-not-edit hint in $comment value; got:\n%s", body)
 	}
-	// $comment must precede every app key (the marshaler sorts by ASCII
-	// and `$` 0x24 is less than every letter, so this should hold).
+	// $comment must precede the serial key (the marshaler sorts by ASCII and
+	// `$` 0x24 is less than every letter, so this should hold).
 	commentIdx := strings.Index(body, `"$comment"`)
-	for _, app := range []string{`"com.a"`, `"com.b"`} {
-		if idx := strings.Index(body, app); idx > 0 && idx < commentIdx {
-			t.Errorf("$comment should appear before %s; got: comment=%d %s=%d", app, commentIdx, app, idx)
-		}
+	if idx := strings.Index(body, `"emulator-5554"`); idx > 0 && idx < commentIdx {
+		t.Errorf("$comment should appear before the serial key; got: comment=%d serial=%d", commentIdx, idx)
 	}
 }
 
@@ -403,8 +406,10 @@ func TestStatusJSONLoadIgnoresMetaKeys(t *testing.T) {
 	manual := []byte(`{
   "$comment": "hand-authored, expect this to be stripped",
   "$schema": "https://example.com/forja-status.schema.json",
-  "com.real": { "enabled": ["foo"] },
-  "com.empty": { "enabled": [] }
+  "emulator-5554": {
+    "com.real": { "enabled": ["foo"] },
+    "com.empty": { "enabled": [] }
+  }
 }`)
 	if err := os.WriteFile(path, manual, 0o644); err != nil {
 		t.Fatal(err)
@@ -414,20 +419,21 @@ func TestStatusJSONLoadIgnoresMetaKeys(t *testing.T) {
 		t.Fatalf("LoadStatus: %v", err)
 	}
 	if _, exists := st["$comment"]; exists {
-		t.Errorf("$comment must be stripped, but found in loaded Status: %+v", st)
+		t.Errorf("$comment must be stripped, but found in loaded status: %+v", st)
 	}
 	if _, exists := st["$schema"]; exists {
-		t.Errorf("$schema must be stripped, but found in loaded Status: %+v", st)
+		t.Errorf("$schema must be stripped, but found in loaded status: %+v", st)
 	}
-	if !st.IsEnabled("com.real", "foo") {
+	dev := st["emulator-5554"]
+	if !dev.IsEnabled("com.real", "foo") {
 		t.Errorf("com.real/foo should be enabled: %+v", st)
 	}
-	if _, exists := st["com.empty"]; !exists {
-		t.Errorf("com.empty entry should survive (even with empty list): %+v", st)
+	if _, exists := dev["com.empty"]; !exists {
+		t.Errorf("com.empty entry should survive load (pruning happens on save): %+v", dev)
 	}
 
-	// Round-trip: saving again must re-emit $comment (forja-owned), and
-	// loading once more must keep IsEnabled stable.
+	// Round-trip: saving again must re-emit $comment (forja-owned), prune the
+	// empty app, and keep the real entry stable.
 	if err := SaveStatus(path, st); err != nil {
 		t.Fatalf("SaveStatus round-trip: %v", err)
 	}
@@ -439,8 +445,11 @@ func TestStatusJSONLoadIgnoresMetaKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadStatus round-trip: %v", err)
 	}
-	if !back.IsEnabled("com.real", "foo") {
+	if !back["emulator-5554"].IsEnabled("com.real", "foo") {
 		t.Errorf("com.real/foo should still be enabled after round-trip: %+v", back)
+	}
+	if _, exists := back["emulator-5554"]["com.empty"]; exists {
+		t.Errorf("com.empty should have been pruned on save: %+v", back)
 	}
 }
 
@@ -770,5 +779,45 @@ func TestToDeviceJSONEmpty(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, []map[string]any{}) {
 		t.Errorf("want empty array, got %v", got)
+	}
+}
+
+func TestDeviceStatusesTargetsEnabling(t *testing.T) {
+	d := DeviceStatuses{
+		"serial-b": {"com.x": {Enabled: []string{"rule1"}}},
+		"serial-a": {
+			"com.x": {Enabled: []string{"rule1", "rule2"}},
+			"com.y": {Enabled: []string{"rule1"}},
+		},
+	}
+	got := d.TargetsEnabling("rule1")
+	want := []DeviceApp{
+		{Serial: "serial-a", App: "com.x"},
+		{Serial: "serial-a", App: "com.y"},
+		{Serial: "serial-b", App: "com.x"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("TargetsEnabling(rule1): want %+v, got %+v", want, got)
+	}
+	got2 := d.TargetsEnabling("rule2")
+	if len(got2) != 1 || got2[0] != (DeviceApp{Serial: "serial-a", App: "com.x"}) {
+		t.Errorf("TargetsEnabling(rule2): got %+v", got2)
+	}
+	if got3 := d.TargetsEnabling("missing"); len(got3) != 0 {
+		t.Errorf("TargetsEnabling(missing): want empty, got %+v", got3)
+	}
+}
+
+func TestDeviceStatusesDropRuleAcrossDevices(t *testing.T) {
+	d := DeviceStatuses{
+		"a": {"com.x": {Enabled: []string{"shared", "a-only"}}},
+		"b": {"com.x": {Enabled: []string{"shared"}}},
+	}
+	d.DropRule("shared")
+	if d["a"].IsEnabled("com.x", "shared") || d["b"].IsEnabled("com.x", "shared") {
+		t.Errorf("shared should be dropped on every device: %+v", d)
+	}
+	if !d["a"].IsEnabled("com.x", "a-only") {
+		t.Errorf("a-only lost as collateral: %+v", d)
 	}
 }

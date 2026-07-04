@@ -307,3 +307,92 @@ func TestAttachAgentDetectsExceptionInStdout(t *testing.T) {
 		t.Error("expected error when stdout contains Exception")
 	}
 }
+
+func TestParseDevices(t *testing.T) {
+	out := `List of devices attached
+emulator-5554          device product:sdk_gphone64_arm64 model:sdk_gphone64_arm64 transport_id:1
+RZ8N70ABCDE            device usb:1-1 product:panther model:Pixel_7 transport_id:2
+00fabc                 unauthorized
+192.168.1.5:5555       offline
+
+`
+	got := parseDevices(out)
+	if len(got) != 4 {
+		t.Fatalf("want 4 devices, got %d: %+v", len(got), got)
+	}
+	if got[0].Serial != "emulator-5554" || got[0].State != "device" || got[0].Model != "sdk_gphone64_arm64" {
+		t.Errorf("device[0] parsed wrong: %+v", got[0])
+	}
+	if got[1].Serial != "RZ8N70ABCDE" || got[1].Model != "Pixel_7" {
+		t.Errorf("device[1] model not lifted: %+v", got[1])
+	}
+	if got[2].State != "unauthorized" || got[2].Model != "" {
+		t.Errorf("device[2] should be unauthorized with no model: %+v", got[2])
+	}
+	if got[3].State != "offline" {
+		t.Errorf("device[3] should be offline: %+v", got[3])
+	}
+}
+
+func TestParseDevicesEmpty(t *testing.T) {
+	if d := parseDevices("List of devices attached\n\n"); len(d) != 0 {
+		t.Errorf("no devices should parse to empty, got %+v", d)
+	}
+}
+
+func TestDevicesQueriesGlobalTable(t *testing.T) {
+	fx := &fakeExecutor{
+		t: t,
+		canned: []cannedResponse{
+			{matchSubstr: "devices -l", stdout: "List of devices attached\nemulator-5554\tdevice\n"},
+		},
+	}
+	// Even with a serial target set, Devices() lists the global table and must
+	// NOT pass -s (it's not a device-scoped command).
+	a := NewWithExecutorSerial(fx, "emulator-5554")
+	devs, err := a.Devices(context.Background())
+	if err != nil {
+		t.Fatalf("Devices: %v", err)
+	}
+	if len(devs) != 1 || devs[0].Serial != "emulator-5554" {
+		t.Fatalf("unexpected devices: %+v", devs)
+	}
+	joined := strings.Join(fx.calls[0].args, " ")
+	if strings.Contains(joined, "-s") {
+		t.Errorf("Devices() must not pass -s; got args %v", fx.calls[0].args)
+	}
+}
+
+func TestSerialPrependedToDeviceScopedCalls(t *testing.T) {
+	fx := &fakeExecutor{
+		t: t,
+		canned: []cannedResponse{
+			{matchSubstr: "pidof", stdout: "1234\n"},
+		},
+	}
+	a := NewWithExecutorSerial(fx, "emulator-5554")
+	if _, err := a.Pidof(context.Background(), "com.example.app"); err != nil {
+		t.Fatalf("Pidof: %v", err)
+	}
+	args := fx.calls[0].args
+	if len(args) < 2 || args[0] != "-s" || args[1] != "emulator-5554" {
+		t.Fatalf("expected -s emulator-5554 prefix, got %v", args)
+	}
+	if args[2] != "shell" {
+		t.Errorf("shell should follow the -s target, got %v", args)
+	}
+}
+
+func TestNoSerialNoDashS(t *testing.T) {
+	fx := &fakeExecutor{
+		t:      t,
+		canned: []cannedResponse{{matchSubstr: "pidof", stdout: "1\n"}},
+	}
+	a := NewWithExecutor(fx) // no serial
+	if _, err := a.Pidof(context.Background(), "com.example.app"); err != nil {
+		t.Fatalf("Pidof: %v", err)
+	}
+	if fx.calls[0].args[0] != "shell" {
+		t.Errorf("with no serial, args should start at shell, got %v", fx.calls[0].args)
+	}
+}

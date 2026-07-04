@@ -363,22 +363,30 @@ func resetForjaState(t *testing.T, pkgs ...string) {
 	runForja(t, "init")
 }
 
-// StatusJSON mirrors the on-disk shape of the cached status.json: a flat top-level
-// map of app → {"enabled": [...rule names]}. A rule is "on" for an app iff
-// its name appears in that app's enabled list (= absent means off).
-type StatusJSON map[string]struct {
+// appEnabled is one app's enabled rule list.
+type appEnabled struct {
 	Enabled []string `json:"enabled"`
 }
 
-// IsEnabled is the test-side mirror of config.Status.IsEnabled.
+// StatusJSON mirrors the on-disk shape of the cached status.json: it is keyed
+// by device serial first, then app → {"enabled": [...rule names]}. A rule is
+// "on" for an app iff its name appears in that app's enabled list (= absent
+// means off).
+type StatusJSON map[string]map[string]appEnabled
+
+// IsEnabled reports whether name is on for app on ANY device. The e2e suite
+// runs against a single device, so "any device" is unambiguous and lets the
+// existing call sites stay device-agnostic.
 func (s StatusJSON) IsEnabled(app, name string) bool {
-	ps, ok := s[app]
-	if !ok {
-		return false
-	}
-	for _, n := range ps.Enabled {
-		if n == name {
-			return true
+	for _, apps := range s {
+		ps, ok := apps[app]
+		if !ok {
+			continue
+		}
+		for _, n := range ps.Enabled {
+			if n == name {
+				return true
+			}
 		}
 	}
 	return false
@@ -408,13 +416,11 @@ func readStatusJSON(t *testing.T) StatusJSON {
 		if strings.HasPrefix(k, "$") {
 			continue
 		}
-		var ps struct {
-			Enabled []string `json:"enabled"`
-		}
-		if err := json.Unmarshal(v, &ps); err != nil {
+		apps := map[string]appEnabled{}
+		if err := json.Unmarshal(v, &apps); err != nil {
 			t.Fatalf("decode status.json[%s]: %v", k, err)
 		}
-		out[k] = ps
+		out[k] = apps
 	}
 	return out
 }

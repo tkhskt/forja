@@ -1,9 +1,15 @@
-// rules_app.go wraps the multi-stage `forja rules` flow — optional app
-// picker → device status + rules load (async) → rules toggle view — into a
-// single bubbletea program. Running each stage as its own tea.Program used
-// to leave alt-screen mode between stages and the user saw a perceptible
-// terminal flicker; sharing one program over the whole flow keeps the alt
-// screen held end to end.
+// rules_app.go wraps the multi-stage `forja rules` flow — optional device
+// picker → optional app picker → device status + rules load (async) → rules
+// toggle view — into a single bubbletea program. Running each stage as its own
+// tea.Program used to leave alt-screen mode between stages and the user saw a
+// perceptible terminal flicker; sharing one program over the whole flow keeps
+// the alt screen held end to end.
+//
+// The device picker is only shown when the caller couldn't resolve a single
+// device up front (i.e. several are connected and no --device was given). When
+// a device is preset, execution skips straight to the app picker (or the rules
+// load, if an app was preset too), so the single-device experience is
+// unchanged.
 package tui
 
 import (
@@ -13,59 +19,94 @@ import (
 	"github.com/tkhskt/forja/internal/config"
 )
 
-// stage identifies which sub-model the wrapper is currently rendering. The
-// transitions are linear: stagePickApp → stageLoadDeps → stagePickRules →
-// stageDone. When the wrapper is constructed with a preset app, stagePickApp
-// is skipped and execution starts in stageLoadDeps.
+// stage identifies which sub-model the wrapper is currently rendering.
+// Transitions are linear, skipping any stage whose input was resolved up front:
+//
+//	stagePickDevice → stageLoadApps → stagePickApp → stageLoadDeps →
+//	stagePickRules → stageDone
 type stage int
 
 const (
-	stagePickApp stage = iota
+	stagePickDevice stage = iota
+	stageLoadApps
+	stagePickApp
 	stageLoadDeps
 	stagePickRules
 	stageDone
 )
 
-// LoadDepsFunc resolves the per-app state the rules view needs: the merged
-// effective rule slice (.Enabled reflecting status.json) and a DeviceStatus
-// snapshot (live/stale/unknown). It runs in a goroutine via tea.Cmd so the
-// bubbletea event loop keeps rendering the loading view while the device
-// query and yml reload are in flight.
-//
-// Returning a non-nil error makes the wrapper quit with that error attached
-// to its Result; callers handle the surface-level reporting.
-type LoadDepsFunc func(ctx context.Context, app string) ([]config.EffectiveRule, DeviceStatus, error)
+// LoadAppsFunc enumerates the debuggable apps on a chosen device, plus their
+// alias annotations. It runs in a goroutine via tea.Cmd (device app-listing is
+// an adb round-trip) so the event loop keeps rendering while it's in flight.
+type LoadAppsFunc func(ctx context.Context, serial string) (apps []string, aliasesByApp map[string][]string, err error)
 
-// loadDoneMsg is the result of the async load step. The wrapper's Update
-// dispatches on this message to construct the RulesModel and advance to
-// stagePickRules.
+// LoadDepsFunc resolves the per-app state the rules view needs: the merged
+// effective rule slice (.Enabled reflecting this device's status) and a
+// DeviceStatus snapshot. It runs in a goroutine via tea.Cmd. A non-nil error
+// makes the wrapper quit with that error attached to its Result.
+type LoadDepsFunc func(ctx context.Context, serial, app string) ([]config.EffectiveRule, DeviceStatus, error)
+
+// appsLoadedMsg is the result of the async app-enumeration step.
+type appsLoadedMsg struct {
+	apps    []string
+	aliases map[string][]string
+	err     error
+}
+
+// loadDoneMsg is the result of the async per-app load step.
 type loadDoneMsg struct {
 	eff          []config.EffectiveRule
 	deviceStatus DeviceStatus
 	err          error
 }
 
+// RulesAppConfig is the wrapper's construction input. Resolving a field up
+// front (Device, App) skips the corresponding picker stage.
+type RulesAppConfig struct {
+	// Device, when non-empty, is the already-resolved target serial and the
+	// device picker is skipped. When empty, Devices is shown in a picker.
+	Device  string
+	Devices []DeviceChoice
+
+	// App, when non-empty, is the already-resolved target app and the app
+	// picker is skipped. Apps/AliasesByApp feed the app picker when Device was
+	// preset (single-device path); in the device-picker path the app list is
+	// loaded via LoadApps after the device is chosen.
+	App          string
+	Apps         []string
+	AliasesByApp map[string][]string
+
+	LoadApps LoadAppsFunc
+	LoadDeps LoadDepsFunc
+}
+
 // RulesAppModel is the top-level model for `forja rules`. It composes the
-// AppPickerModel and the RulesModel (rather than subclassing or duplicating
-// their logic) so each sub-model stays independently testable and the
-// wrapper only owns the transitions.
+// device picker, app picker, and rules sub-models (rather than subclassing
+// their logic) so each stays independently testable and the wrapper only owns
+// the transitions.
 type RulesAppModel struct {
 	stage stage
 
-	// Picker stage state. pickerPresent is set when the wrapper was
-	// constructed without a preset app — used in Result() to distinguish
-	// "cancelled at the picker" from "no picker was ever shown".
+	// Device stage. devicePresent is set when the device picker is shown
+	// (used in Result() to distinguish "cancelled at device pick" from "no
+	// device picker was ever shown").
+	devicePicker  DevicePickerModel
+	devicePresent bool
+	device        string // resolved serial (preset or picked)
+
+	// App stage. pickerPresent is set when the app picker is shown.
 	picker        AppPickerModel
 	pickerPresent bool
+	presetApp     string
+	aliasesByApp  map[string][]string
 
-	// Load stage state. loadingErr is set when LoadDepsFunc returned an
-	// error; the wrapper quits and surfaces it via Result.
+	// Load stages.
+	loadApps   LoadAppsFunc
 	loadDeps   LoadDepsFunc
 	loadingErr error
 
-	// Rules stage state. rulesReady distinguishes "we reached the rules
-	// view at least once" from "we quit during loading" — only the former
-	// has a meaningful toggle result to report back.
+	// Rules stage. rulesReady distinguishes "we reached the rules view at
+	// least once" from "we quit during loading".
 	rules      RulesModel
 	rulesReady bool
 
@@ -73,57 +114,113 @@ type RulesAppModel struct {
 	app string
 }
 
-// NewRulesAppModel constructs the wrapper. If presetApp is non-empty the
-// picker is skipped and the model starts in the loading stage. apps and
-// aliasesByApp are forwarded to NewAppPickerModel when the picker is shown.
+// NewRulesAppModel constructs the wrapper from cfg. The starting stage depends
+// on what cfg already resolved:
 //
-// loadDeps is invoked exactly once, after the app is chosen (or immediately
-// when presetApp is set). It must be cheap to construct — the cwd-resolved
-// paths and engine references should be closed over by the caller.
-func NewRulesAppModel(presetApp string, apps []string, aliasesByApp map[string][]string, loadDeps LoadDepsFunc) RulesAppModel {
+//   - Device == ""            → stagePickDevice
+//   - Device set, App == ""   → stagePickApp
+//   - Device set, App set     → stageLoadDeps
+func NewRulesAppModel(cfg RulesAppConfig) RulesAppModel {
 	m := RulesAppModel{
-		loadDeps: loadDeps,
-		app:      presetApp,
+		device:       cfg.Device,
+		presetApp:    cfg.App,
+		app:          cfg.App,
+		aliasesByApp: cfg.AliasesByApp,
+		loadApps:     cfg.LoadApps,
+		loadDeps:     cfg.LoadDeps,
 	}
-	if presetApp != "" {
+	if cfg.Device == "" {
+		m.devicePicker = NewDevicePickerModel(cfg.Devices)
+		m.devicePresent = true
+		m.stage = stagePickDevice
+		return m
+	}
+	// Device is preset (single device or --device). Skip straight to the app
+	// picker, or to the load when an app was preset too.
+	if cfg.App != "" {
 		m.stage = stageLoadDeps
 		return m
 	}
-	m.picker = NewAppPickerModel(apps, aliasesByApp)
+	m.picker = NewAppPickerModel(cfg.Apps, cfg.AliasesByApp)
 	m.pickerPresent = true
 	m.stage = stagePickApp
 	return m
 }
 
 func (m RulesAppModel) Init() tea.Cmd {
-	if m.stage == stageLoadDeps {
+	switch m.stage {
+	case stagePickDevice:
+		return m.devicePicker.Init()
+	case stageLoadDeps:
 		return m.startLoadCmd()
+	default:
+		return m.picker.Init()
 	}
-	return m.picker.Init()
 }
 
-// startLoadCmd builds the tea.Cmd that runs LoadDepsFunc in a goroutine.
-// The result lands as a loadDoneMsg in the next Update call.
+// startLoadAppsCmd runs LoadAppsFunc for the chosen device in a goroutine.
+func (m RulesAppModel) startLoadAppsCmd() tea.Cmd {
+	serial := m.device
+	fn := m.loadApps
+	return func() tea.Msg {
+		apps, aliases, err := fn(context.Background(), serial)
+		return appsLoadedMsg{apps: apps, aliases: aliases, err: err}
+	}
+}
+
+// startLoadCmd runs LoadDepsFunc for the chosen (device, app) in a goroutine.
 func (m RulesAppModel) startLoadCmd() tea.Cmd {
+	serial := m.device
 	app := m.app
 	fn := m.loadDeps
 	return func() tea.Msg {
-		eff, ds, err := fn(context.Background(), app)
+		eff, ds, err := fn(context.Background(), serial, app)
 		return loadDoneMsg{eff: eff, deviceStatus: ds, err: err}
 	}
 }
 
 func (m RulesAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.stage {
+	case stagePickDevice:
+		modelI, cmd := m.devicePicker.Update(msg)
+		m.devicePicker = modelI.(DevicePickerModel)
+		if !m.devicePicker.quitting {
+			return m, cmd
+		}
+		if m.devicePicker.cancelled {
+			m.stage = stageDone
+			return m, tea.Quit
+		}
+		m.device = m.devicePicker.selected
+		// App may still be preset (--app with several devices): skip the app
+		// picker and load directly; otherwise enumerate this device's apps.
+		if m.presetApp != "" {
+			m.stage = stageLoadDeps
+			return m, m.startLoadCmd()
+		}
+		m.stage = stageLoadApps
+		return m, m.startLoadAppsCmd()
+
+	case stageLoadApps:
+		if done, ok := msg.(appsLoadedMsg); ok {
+			if done.err != nil {
+				m.loadingErr = done.err
+				m.stage = stageDone
+				return m, tea.Quit
+			}
+			m.picker = NewAppPickerModel(done.apps, done.aliases)
+			m.pickerPresent = true
+			m.stage = stagePickApp
+			return m, m.picker.Init()
+		}
+		return m, nil
+
 	case stagePickApp:
 		modelI, cmd := m.picker.Update(msg)
 		m.picker = modelI.(AppPickerModel)
 		if !m.picker.quitting {
 			return m, cmd
 		}
-		// Picker is signalling end-of-stage. Discard the tea.Quit it
-		// emitted (it was meant to exit a standalone-picker program; here
-		// the wrapper takes over routing).
 		if m.picker.cancelled {
 			m.stage = stageDone
 			return m, tea.Quit
@@ -131,6 +228,7 @@ func (m RulesAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.app = m.picker.selected
 		m.stage = stageLoadDeps
 		return m, m.startLoadCmd()
+
 	case stageLoadDeps:
 		if done, ok := msg.(loadDoneMsg); ok {
 			if done.err != nil {
@@ -144,6 +242,7 @@ func (m RulesAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.rules.Init()
 		}
 		return m, nil
+
 	case stagePickRules:
 		modelI, cmd := m.rules.Update(msg)
 		m.rules = modelI.(RulesModel)
@@ -158,12 +257,16 @@ func (m RulesAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m RulesAppModel) View() string {
 	switch m.stage {
+	case stagePickDevice:
+		return m.devicePicker.View()
+	case stageLoadApps:
+		header := titleStyle.Render("forja rules — " + m.device)
+		return header + "\n\n" + dimStyle.Render("loading apps…") + "\n"
 	case stagePickApp:
 		return m.picker.View()
 	case stageLoadDeps:
 		header := titleStyle.Render("forja rules — " + m.app)
-		body := dimStyle.Render("loading device status…")
-		return header + "\n\n" + body + "\n"
+		return header + "\n\n" + dimStyle.Render("loading device status…") + "\n"
 	case stagePickRules:
 		return m.rules.View()
 	}
@@ -171,24 +274,27 @@ func (m RulesAppModel) View() string {
 }
 
 // Result is the wrapper's hand-off to the cmd layer after the program exits.
-// The fields cover every termination path:
 //
-//   - cancelled: the user pressed q/esc at the picker stage.
-//   - err: LoadDepsFunc returned an error.
+//   - cancelled: the user pressed q/esc at the device or app picker.
+//   - err: LoadApps/LoadDeps returned an error.
+//   - device: the chosen (or preset) serial.
 //   - app: the chosen (or preset) app, empty when cancelled before picking.
 //   - eff: the (possibly toggled) effective rules — non-nil only when the
 //     rules view actually rendered.
 //   - dirty: whether the rules view recorded any toggle change.
-func (m RulesAppModel) Result() (app string, eff []config.EffectiveRule, dirty bool, cancelled bool, err error) {
+func (m RulesAppModel) Result() (device, app string, eff []config.EffectiveRule, dirty bool, cancelled bool, err error) {
 	if m.loadingErr != nil {
-		return m.app, nil, false, false, m.loadingErr
+		return m.device, m.app, nil, false, false, m.loadingErr
+	}
+	if m.devicePresent && m.devicePicker.cancelled {
+		return "", "", nil, false, true, nil
 	}
 	if m.pickerPresent && m.picker.cancelled {
-		return "", nil, false, true, nil
+		return m.device, "", nil, false, true, nil
 	}
 	if !m.rulesReady {
-		return m.app, nil, false, false, nil
+		return m.device, m.app, nil, false, false, nil
 	}
 	rules, dirtyFlag := m.rules.Result()
-	return m.app, rules, dirtyFlag, false, nil
+	return m.device, m.app, rules, dirtyFlag, false, nil
 }

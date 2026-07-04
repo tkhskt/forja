@@ -131,6 +131,7 @@ func registerTools(s *mcp.Server) {
 type ListInput struct {
 	ProjectPath string `json:"project_path,omitempty" jsonschema:"path to the project root containing .forja/ (defaults to the server's working directory)"`
 	App         string `json:"app,omitempty" jsonschema:"applicationId or alias; when set, each rule's enabled state for this app is reported"`
+	Device      string `json:"device,omitempty" jsonschema:"device serial (from adb devices); needed with app only when several devices are connected"`
 }
 
 type RuleView struct {
@@ -159,12 +160,17 @@ func listHandler(_ context.Context, _ *mcp.CallToolRequest, in ListInput) (*mcp.
 			return err
 		}
 		app := in.App
+		serial := ""
 		if app != "" {
 			if app, err = resolveApp(app); err != nil {
 				return err
 			}
+			// Enabled state is per-device, so resolve one when reporting it.
+			if serial, err = resolveDevice(in.Device); err != nil {
+				return err
+			}
 		}
-		eff, err := rules.LoadEffective(paths, app)
+		eff, err := rules.LoadEffective(paths, serial, app)
 		if err != nil {
 			return err
 		}
@@ -328,6 +334,7 @@ func removeHandler(_ context.Context, _ *mcp.CallToolRequest, in RemoveInput) (*
 type ApplyInput struct {
 	ProjectPath string   `json:"project_path,omitempty" jsonschema:"path to the project root containing .forja/ (defaults to the server's working directory)"`
 	App         string   `json:"app" jsonschema:"target applicationId or alias (the app must be running on the device)"`
+	Device      string   `json:"device,omitempty" jsonschema:"device serial (from adb devices); required only when several devices are connected"`
 	Enable      []string `json:"enable,omitempty" jsonschema:"rule names/handles to enable on the app"`
 	Disable     []string `json:"disable,omitempty" jsonschema:"rule names/handles to disable on the app"`
 }
@@ -348,25 +355,29 @@ func applyHandler(_ context.Context, _ *mcp.CallToolRequest, in ApplyInput) (*mc
 		if err != nil {
 			return err
 		}
+		serial, err := resolveDevice(in.Device)
+		if err != nil {
+			return err
+		}
 		paths, err := rulesPaths()
 		if err != nil {
 			return err
 		}
 		if len(in.Enable) > 0 {
-			if err := rules.Enable(paths, app, in.Enable); err != nil {
+			if err := rules.Enable(paths, serial, app, in.Enable); err != nil {
 				return err
 			}
 		}
 		if len(in.Disable) > 0 {
-			if err := rules.Disable(paths, app, in.Disable); err != nil {
+			if err := rules.Disable(paths, serial, app, in.Disable); err != nil {
 				return err
 			}
 		}
-		n, err := pushEffective(app)
+		n, err := pushEffective(serial, app)
 		if err != nil {
 			return err
 		}
-		msg = fmt.Sprintf("applied to %s: %d rule(s) enabled, pushed to device", app, n)
+		msg = fmt.Sprintf("applied to %s on %s: %d rule(s) enabled, pushed to device", app, serial, n)
 		return nil
 	})
 	if err != nil {
@@ -380,6 +391,7 @@ func applyHandler(_ context.Context, _ *mcp.CallToolRequest, in ApplyInput) (*mc
 type OffInput struct {
 	ProjectPath string `json:"project_path,omitempty" jsonschema:"path to the project root containing .forja/ (defaults to the server's working directory)"`
 	App         string `json:"app" jsonschema:"target applicationId or alias"`
+	Device      string `json:"device,omitempty" jsonschema:"device serial (from adb devices); required only when several devices are connected"`
 }
 
 func offHandler(_ context.Context, _ *mcp.CallToolRequest, in OffInput) (*mcp.CallToolResult, any, error) {
@@ -394,7 +406,11 @@ func offHandler(_ context.Context, _ *mcp.CallToolRequest, in OffInput) (*mcp.Ca
 		if err != nil {
 			return err
 		}
-		eng, err := engine.New(globals.BundleDir)
+		serial, err := resolveDevice(in.Device)
+		if err != nil {
+			return err
+		}
+		eng, err := engine.NewWithDevice(globals.BundleDir, serial)
 		if err != nil {
 			return err
 		}
@@ -405,7 +421,7 @@ func offHandler(_ context.Context, _ *mcp.CallToolRequest, in OffInput) (*mcp.Ca
 		if err != nil {
 			return err
 		}
-		if err := rules.ClearApp(paths, app); err != nil {
+		if err := rules.ClearApp(paths, serial, app); err != nil {
 			return fmt.Errorf("update status.json: %w", err)
 		}
 		return nil
@@ -420,13 +436,18 @@ func offHandler(_ context.Context, _ *mcp.CallToolRequest, in OffInput) (*mcp.Ca
 
 type SyncInput struct {
 	ProjectPath string `json:"project_path,omitempty" jsonschema:"path to the project root containing .forja/ (defaults to the server's working directory)"`
-	App         string `json:"app,omitempty" jsonschema:"limit the sync to this app (or alias); omit to sync every app with state"`
+	App         string `json:"app,omitempty" jsonschema:"limit the sync to this app (or alias); omit to sync every app with state on the device"`
+	Device      string `json:"device,omitempty" jsonschema:"device serial (from adb devices); required only when several devices are connected"`
 }
 
 func syncHandler(_ context.Context, _ *mcp.CallToolRequest, in SyncInput) (*mcp.CallToolResult, any, error) {
 	var msg string
 	err := withProject(in.ProjectPath, func() error {
 		if err := requireForjaDir(); err != nil {
+			return err
+		}
+		serial, err := resolveDevice(in.Device)
+		if err != nil {
 			return err
 		}
 		paths, err := rulesPaths()
@@ -437,29 +458,30 @@ func syncHandler(_ context.Context, _ *mcp.CallToolRequest, in SyncInput) (*mcp.
 		if err != nil {
 			return err
 		}
+		deviceSt := st[serial] // apps with state on the resolved device (may be nil)
 		var targets []string
 		if in.App != "" {
 			app, err := resolveApp(in.App)
 			if err != nil {
 				return err
 			}
-			if _, ok := st[app]; !ok {
-				return fmt.Errorf("no state for %s — run forja_apply first", app)
+			if _, ok := deviceSt[app]; !ok {
+				return fmt.Errorf("no state for %s on %s — run forja_apply first", app, serial)
 			}
 			targets = []string{app}
 		} else {
-			for k := range st {
+			for k := range deviceSt {
 				targets = append(targets, k)
 			}
 			if len(targets) == 0 {
-				return errors.New("no apps have state — nothing to sync (use forja_apply first)")
+				return fmt.Errorf("no apps have state on %s — nothing to sync (use forja_apply first)", serial)
 			}
 			sort.Strings(targets)
 		}
 
 		var pushed, skipped []string
 		for _, app := range targets {
-			if _, err := pushEffective(app); err != nil {
+			if _, err := pushEffective(serial, app); err != nil {
 				if errors.Is(err, engine.ErrAppNotRunning) {
 					skipped = append(skipped, app)
 					continue
@@ -483,8 +505,8 @@ func syncHandler(_ context.Context, _ *mcp.CallToolRequest, in SyncInput) (*mcp.
 // pushEffective loads the effective rule set for app and pushes it to the
 // device, returning how many rules ended up enabled. Stdout-silent (unlike the
 // command-layer pushToApps), so it's safe to call from MCP handlers.
-func pushEffective(app string) (int, error) {
-	eng, err := engine.New(globals.BundleDir)
+func pushEffective(serial, app string) (int, error) {
+	eng, err := engine.NewWithDevice(globals.BundleDir, serial)
 	if err != nil {
 		return 0, err
 	}
@@ -492,7 +514,7 @@ func pushEffective(app string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	eff, err := rules.LoadEffective(paths, app)
+	eff, err := rules.LoadEffective(paths, serial, app)
 	if err != nil {
 		return 0, err
 	}

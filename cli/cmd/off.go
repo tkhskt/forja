@@ -33,7 +33,11 @@ Only the named app is affected; other apps' state stays intact.`,
 				return err
 			}
 			app = resolvedApp
-			eng, err := engine.New(globals.BundleDir)
+			serial, err := resolveDevice("")
+			if err != nil {
+				return err
+			}
+			eng, err := engine.NewWithDevice(globals.BundleDir, serial)
 			if err != nil {
 				return err
 			}
@@ -44,10 +48,10 @@ Only the named app is affected; other apps' state stays intact.`,
 			if err != nil {
 				return err
 			}
-			if err := rules.ClearApp(paths, app); err != nil {
+			if err := rules.ClearApp(paths, serial, app); err != nil {
 				return fmt.Errorf("update status.json: %w", err)
 			}
-			fmt.Printf("[off] cleared rules on %s\n", app)
+			fmt.Printf("[off] cleared rules on %s (%s)\n", app, serial)
 			return nil
 		},
 	}

@@ -1,6 +1,6 @@
 # Usage
 
-forja treats the current working directory as a single "project". The yml file is **the rule catalog** and `status.json` is **the per-app on/off state** — those two responsibilities live in separate places: the catalog is authored under `.forja/`, while the state is machine-managed in the user cache.
+forja treats the current working directory as a single "project". The yml file is **the rule catalog** and `status.json` is **the per-device, per-app on/off state** — those two responsibilities live in separate places: the catalog is authored under `.forja/`, while the state is machine-managed in the user cache.
 
 | File | Scope | Git | Role | Edit by hand? |
 |---|---|---|---|---|
@@ -10,7 +10,7 @@ forja treats the current working directory as a single "project". The yml file i
 | `.forja/aliases.local.yml` | **local** | gitignore | personal short-name map (overrides project) | ✅ |
 | `<cache>/forja/status/<project>.json` | (state) | — (outside repo) | **per-app** enabled state | ❌ CLI-managed |
 
-`.forja/` holds only authored content. The per-app enabled state (`status.json`) is machine-managed transient state, so it lives in the OS user cache (`~/Library/Caches/forja/status/` on macOS, `$XDG_CACHE_HOME/forja/status/` or `~/.cache/forja/status/` on Linux), keyed by the project's root path. It's never committed and there's nothing to gitignore for it. A pre-existing `.forja/status.json` from an older forja is migrated into the cache automatically on the next command.
+`.forja/` holds only authored content. The per-app enabled state (`status.json`) is machine-managed transient state, so it lives in the OS user cache (`~/Library/Caches/forja/status/` on macOS, `$XDG_CACHE_HOME/forja/status/` or `~/.cache/forja/status/` on Linux), keyed by the project's root path. It's never committed and there's nothing to gitignore for it. `status.json` is transient — if forja can't read it (corrupt, or written by a forja predating per-device keying) it simply starts empty and repopulates on the next `apply`; there's no state worth preserving across that.
 
 The yml file holds no information about which app a rule targets, so the same rule can be reused across multiple apps (dev/staging variants, multiple apps in a monorepo, etc.).
 
@@ -74,6 +74,8 @@ forja rules                           # picks an app, then opens the toggle list
 forja rules --app com.tkhskt.sample_app   # skip the picker
 ```
 
+With **several devices** connected, the TUI opens with a device picker first (device → package → rule); with one device (or `--device SERIAL`) that step is skipped. See [Multiple devices](#multiple-devices).
+
 Pressing `q` saves and pushes. Pressing `ctrl-c` discards changes.
 
 ### 5. Clear an app
@@ -104,6 +106,26 @@ Turns off every rewrite on the named app, so the app sees the original (real) re
 | `forja alias rm NAME [--local]` | Delete an alias from the target scope (project by default, `--local` for the personal file) |
 | `forja alias list` | List registered aliases, grouped by scope |
 | `forja mcp` | Run forja as an MCP server over stdio so an AI client can drive it (see [MCP server](#mcp-server)) |
+
+## Multiple devices
+
+When exactly one device is connected, forja targets it automatically — nothing to think about. When **several devices** are connected, every device-facing command needs to know which one you mean:
+
+```bash
+forja --device emulator-5554 apply --app dev --enable teapot
+forja --device RZ8N70ABCDE off --app dev
+```
+
+`--device` is a global flag (it goes before the subcommand) and takes a **device serial** exactly as shown by `adb devices`. If you run a device-facing command with several devices connected and no `--device`, forja **refuses and lists the connected devices** rather than guessing:
+
+```
+$ forja apply --app dev --enable teapot
+forja: multiple devices connected — choose one with --device SERIAL:
+  RZ8N70ABCDE  Pixel_7  (device)
+  emulator-5554  (device)
+```
+
+The interactive TUI (`forja rules`) handles this differently: with several devices it inserts a **device-selection step** in front of the package picker (device → package → rule), so you don't need `--device` there — though passing it still skips the device step. Enabled state is tracked **per device** (see [`status.json`](#statusjson-in-the-user-cache)), so the same app can carry different rules on different devices at the same time.
 
 Aliases have the **same two scopes as rules**: project (`.forja/aliases.yml`, committed, shared by the team) and local (`.forja/aliases.local.yml`, gitignored, personal). `set` / `rm` default to project; pass `--local` for the personal file. The two are merged when resolving `--app`, with **local entries overriding project** ones of the same name.
 
@@ -328,27 +350,31 @@ Only **the first matching rule** in the array is applied (OkHttp interceptor sem
 
 ### `status.json` (in the user cache)
 
-> **Location:** the OS user cache — `~/Library/Caches/forja/status/<project>.json` on macOS, `$XDG_CACHE_HOME/forja/status/<project>.json` (or `~/.cache/forja/status/<project>.json`) on Linux. It is **not** under `.forja/` — it's machine-managed transient state, keyed by the project's absolute root path so separate checkouts don't clobber each other. There's nothing to commit or gitignore. A `.forja/status.json` left over from an older forja is migrated here automatically on the next command.
+> **Location:** the OS user cache — `~/Library/Caches/forja/status/<project>.json` on macOS, `$XDG_CACHE_HOME/forja/status/<project>.json` (or `~/.cache/forja/status/<project>.json`) on Linux. It is **not** under `.forja/` — it's machine-managed transient state, keyed by the project's absolute root path so separate checkouts don't clobber each other. There's nothing to commit or gitignore. It's transient: an unreadable or older-format file is discarded and rebuilt on the next push rather than migrated.
 
 > **Don't edit this file by hand.** It's a CLI-managed mirror of what's currently pushed to each device. Manual edits won't reach the device and may be overwritten on the next `forja` invocation. The commands that write it are `forja apply`, the `rules` TUI's save action, `forja off`, and `forja rules remove`.
 >
 > The same warning ships inside the file as a top-level `$comment` key (JSON Schema-style metadata) so anyone opening it in an editor sees it on line 1. Any `$`-prefixed key is silently dropped on load, so the convention is forward-compatible with additional metadata (`$schema` etc.) without forja ever interpreting those entries as applicationIds.
 
-The **per-app enabled rule list**, keyed by rule **handle**: "if a rule's handle is in app X's enabled list, the rule is on; otherwise it's off." Root rules appear as a bare name; bundle rules appear as `<bundle>/<name>`. Two values, no middle ground:
+The file is keyed by **device serial first**, then by app, then the **enabled rule list** keyed by rule **handle**: "if a rule's handle is in app X's enabled list on device S, the rule is on for X on S; otherwise it's off." Keying by serial lets the same app carry independent enabled sets on different devices. Root rules appear as a bare name; bundle rules appear as `<bundle>/<name>`:
 
 ```json
 {
   "$comment": "THIS FILE IS GENERATED BY forja. DO NOT EDIT BY HAND.",
-  "com.tkhskt.sample_app": {
-    "enabled": ["mock-failure", "rules/payments/declined"]
+  "emulator-5554": {
+    "com.tkhskt.sample_app": {
+      "enabled": ["mock-failure", "rules/payments/declined"]
+    }
   },
-  "com.tkhskt.sample_app.staging": {
-    "enabled": ["mock-failure"]
+  "RZ8N70ABCDE": {
+    "com.tkhskt.sample_app": {
+      "enabled": ["mock-failure"]
+    }
   }
 }
 ```
 
-`"enabled": []` (an empty array) means "forja has touched this app but nothing is enabled right now" — that's the state right after `forja off --app X`. If the app key itself is absent, forja has never interacted with that app.
+To keep the file from accumulating dead weight, forja **prunes on every write**: an app whose enabled list becomes empty (e.g. right after `forja off`) is dropped, and a device left with no apps is dropped too. So the file only ever holds `(device, app)` pairs that currently have at least one active rule — an absent app (or device) simply means "off / never touched". Stale entries for a device you no longer use only linger if you left rules active on it; they're harmless (matched only when that serial reconnects).
 
 ---
 
@@ -379,6 +405,8 @@ claude mcp add forja -- forja mcp
 ```
 
 The server resolves `.forja/` from its working directory. Every tool also accepts an optional `project_path` to target a specific project explicitly.
+
+The device-facing tools (`forja_apply`, `forja_off`, `forja_sync`, and `forja_rules_list` when an `app` is given) take an optional `device` argument — a device serial from `adb devices`. With one device it's inferred; with **several** connected and no `device`, the tool errors and lists them, exactly like the CLI. See [Multiple devices](#multiple-devices). You can also launch the server pinned to a device with `forja --device SERIAL mcp`.
 
 ### Tools
 

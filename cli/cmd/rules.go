@@ -152,14 +152,22 @@ only catalog data is shown.
 			if err != nil {
 				return err
 			}
+			serial := ""
 			if app != "" {
 				resolved, err := resolveApp(app)
 				if err != nil {
 					return err
 				}
 				app = resolved
+				// Per-rule enabled state is per-device, so we need a device to
+				// report it against. One device (or --device) resolves cleanly;
+				// several without --device is genuinely ambiguous.
+				serial, err = resolveDevice("")
+				if err != nil {
+					return err
+				}
 			}
-			eff, err := rules.LoadEffective(paths, app)
+			eff, err := rules.LoadEffective(paths, serial, app)
 			if err != nil {
 				return err
 			}
@@ -447,13 +455,13 @@ clears the rule name from every app's enabled list.`,
 				s := rules.ScopeLocal
 				scopePtr = &s
 			}
-			// Snapshot the apps that had this rule enabled BEFORE Remove drops
-			// the status entries, so we know who to re-push to.
+			// Snapshot the (device, app) pairs that had this rule enabled BEFORE
+			// Remove drops the status entries, so we know who to re-push to.
 			st, err := rules.LoadStatus(paths)
 			if err != nil {
 				return err
 			}
-			apps := st.AppsEnabling(args[0])
+			targets := st.TargetsEnabling(args[0])
 			if err := rules.Remove(paths, args[0], scopePtr); err != nil {
 				return err
 			}
@@ -461,7 +469,7 @@ clears the rule name from every app's enabled list.`,
 			if noSync {
 				return nil
 			}
-			return pushToApps(apps, "remove")
+			return pushToTargets(targets, "remove")
 		},
 	}
 	c.Flags().BoolVar(&local, "local", false,
@@ -471,8 +479,9 @@ clears the rule name from every app's enabled list.`,
 }
 
 // autoApplyToEnabledApps is the propagation engine used by update. It reads
-// status.json, finds every app where the named rule is currently enabled, and
-// pushes the (now updated) effective rule set to each of them.
+// status.json, finds every (device, app) where the named rule is currently
+// enabled, and pushes the (now updated) effective rule set to each of them —
+// across every device that had it on.
 func autoApplyToEnabledApps(name, opLabel string) error {
 	paths, err := rulesPaths()
 	if err != nil {
@@ -482,45 +491,69 @@ func autoApplyToEnabledApps(name, opLabel string) error {
 	if err != nil {
 		return err
 	}
-	apps := st.AppsEnabling(name)
-	return pushToApps(apps, opLabel)
+	return pushToTargets(st.TargetsEnabling(name), opLabel)
 }
 
-// pushToApps pushes the current effective state to each app in turn. Apps
-// whose app isn't running are skipped with a warning so an unrelated dead
-// app doesn't block the live ones.
-func pushToApps(apps []string, opLabel string) error {
-	if len(apps) == 0 {
-		fmt.Printf("[%s] no enabled app — yml change only\n", opLabel)
-		return nil
+// pushToApps pushes the current effective state to each app on a single
+// device. Thin wrapper over pushToTargets for callers that already resolved a
+// serial (sync, and the TUI/apply paths).
+func pushToApps(serial string, apps []string, opLabel string) error {
+	targets := make([]config.DeviceApp, 0, len(apps))
+	for _, app := range apps {
+		targets = append(targets, config.DeviceApp{Serial: serial, App: app})
 	}
-	eng, err := engine.New(globals.BundleDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[%s] engine init failed: %v\n", opLabel, err)
+	return pushToTargets(targets, opLabel)
+}
+
+// pushToTargets pushes the current effective rule set to each (device, app)
+// target, grouping by device so one engine is reused per serial. Targets whose
+// app isn't running (or whose device is unreachable) are skipped with a
+// warning so one dead target doesn't block the live ones.
+func pushToTargets(targets []config.DeviceApp, opLabel string) error {
+	if len(targets) == 0 {
+		fmt.Printf("[%s] no enabled app on any device — yml change only\n", opLabel)
 		return nil
 	}
 	paths, err := rulesPaths()
 	if err != nil {
 		return err
 	}
+
+	// Group apps by serial, preserving first-seen serial order.
+	bySerial := map[string][]string{}
+	serialOrder := []string{}
+	for _, t := range targets {
+		if _, seen := bySerial[t.Serial]; !seen {
+			serialOrder = append(serialOrder, t.Serial)
+		}
+		bySerial[t.Serial] = append(bySerial[t.Serial], t.App)
+	}
+
 	pushed := []string{}
 	skipped := []string{}
-	for _, app := range apps {
-		eff, err := rules.LoadEffective(paths, app)
+	for _, serial := range serialOrder {
+		eng, err := engine.NewWithDevice(globals.BundleDir, serial)
 		if err != nil {
-			return err
-		}
-		if err := eng.PushEffective(context.Background(), app, eff); err != nil {
-			if errors.Is(err, engine.ErrAppNotRunning) {
-				skipped = append(skipped, app)
-				continue
-			}
-			fmt.Fprintf(os.Stderr, "[%s] push to %s failed: %v\n", opLabel, app, err)
+			fmt.Fprintf(os.Stderr, "[%s] engine init failed for %s: %v\n", opLabel, serial, err)
 			continue
 		}
-		pushed = append(pushed, app)
+		for _, app := range bySerial[serial] {
+			eff, err := rules.LoadEffective(paths, serial, app)
+			if err != nil {
+				return err
+			}
+			if err := eng.PushEffective(context.Background(), app, eff); err != nil {
+				if errors.Is(err, engine.ErrAppNotRunning) {
+					skipped = append(skipped, serial+"/"+app)
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "[%s] push to %s/%s failed: %v\n", opLabel, serial, app, err)
+				continue
+			}
+			pushed = append(pushed, serial+"/"+app)
+		}
 	}
-	report := fmt.Sprintf("[%s] pushed to %d app", opLabel, len(pushed))
+	report := fmt.Sprintf("[%s] pushed to %d target", opLabel, len(pushed))
 	if len(pushed) > 0 {
 		report += ": " + strings.Join(pushed, ", ")
 	}
@@ -529,11 +562,6 @@ func pushToApps(apps []string, opLabel string) error {
 	}
 	fmt.Println(report)
 	return nil
-}
-
-// pushToApp is the single-app variant. Used by `rules add --app X`.
-func pushToApp(app, opLabel string) error {
-	return pushToApps([]string{app}, opLabel)
 }
 
 // runRulesTUI is the two-stage TUI: pick an app, then edit its toggles.
@@ -569,44 +597,93 @@ func runRulesTUI(app string) error {
 		app = resolved
 	}
 
-	// Apps list + alias annotations for the picker. Only queried when no
-	// preset app was supplied; the picker stage is skipped otherwise.
-	var apps []string
-	aliasesByApp := map[string][]string{}
-	if app == "" {
-		a := adb.New()
-		list, err := a.ListDebuggableApps(context.Background())
-		if err != nil {
-			return fmt.Errorf("list debuggable apps: %w", err)
+	// Resolve the device up front. With --device or exactly one usable device
+	// we get a fixed serial and no device picker; with several and no --device
+	// we present a device picker (and defer app enumeration until it's chosen).
+	presetDevice := ""
+	var deviceChoices []tui.DeviceChoice
+	devs, err := adb.New().Devices(context.Background())
+	if err != nil {
+		return err
+	}
+	usable := make([]adb.Device, 0, len(devs))
+	for _, d := range devs {
+		if d.State == "device" {
+			usable = append(usable, d)
 		}
-		apps = list
-		if al, err := rules.LoadAliases(paths); err == nil {
-			for _, p := range apps {
-				if alts := al.AliasesFor(p); len(alts) > 0 {
-					aliasesByApp[p] = alts
-				}
+	}
+	if globals.Device != "" {
+		serial, err := resolveDevice("") // validates --device against the connected set
+		if err != nil {
+			return err
+		}
+		presetDevice = serial
+	} else {
+		switch len(usable) {
+		case 0:
+			return fmt.Errorf("no device connected%s", deviceListHint(devs))
+		case 1:
+			presetDevice = usable[0].Serial
+		default:
+			for _, d := range usable {
+				deviceChoices = append(deviceChoices, tui.DeviceChoice{Serial: d.Serial, Label: deviceLabel(d)})
 			}
 		}
 	}
 
-	// loadDeps runs in the wrapper's tea.Cmd after the user picks an app
-	// (or immediately when an app was preset). It performs the device-side
-	// status query and reads back the effective rule set, returning both
-	// for the rules view to consume.
-	loadDeps := func(ctx context.Context, picked string) ([]config.EffectiveRule, tui.DeviceStatus, error) {
-		eff, err := rules.LoadEffective(paths, picked)
+	loadAliases := func(list []string) map[string][]string {
+		out := map[string][]string{}
+		if al, err := rules.LoadAliases(paths); err == nil {
+			for _, p := range list {
+				if alts := al.AliasesFor(p); len(alts) > 0 {
+					out[p] = alts
+				}
+			}
+		}
+		return out
+	}
+
+	// For the fixed-device path, enumerate apps synchronously (unchanged
+	// single-device behavior). For the device-picker path, apps are loaded via
+	// loadApps after the device is chosen.
+	var apps []string
+	aliasesByApp := map[string][]string{}
+	if presetDevice != "" && app == "" {
+		list, err := adb.NewWithSerial(presetDevice).ListDebuggableApps(context.Background())
+		if err != nil {
+			return fmt.Errorf("list debuggable apps: %w", err)
+		}
+		apps = list
+		aliasesByApp = loadAliases(list)
+	}
+
+	// loadApps enumerates the debuggable apps on a device chosen in the picker.
+	loadApps := func(ctx context.Context, serial string) ([]string, map[string][]string, error) {
+		list, err := adb.NewWithSerial(serial).ListDebuggableApps(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("list debuggable apps: %w", err)
+		}
+		return list, loadAliases(list), nil
+	}
+
+	// loadDeps runs in the wrapper's tea.Cmd after the (serial, app) pair is
+	// known. It performs the device-side status query and reads back the
+	// effective rule set for that device, returning both for the rules view.
+	loadDeps := func(ctx context.Context, serial, picked string) ([]config.EffectiveRule, tui.DeviceStatus, error) {
+		eff, err := rules.LoadEffective(paths, serial, picked)
 		if err != nil {
 			return nil, tui.DeviceStatus{}, err
 		}
 		deviceStatus := tui.DeviceStatus{Message: "device status unavailable"}
-		if eng, err := engine.New(globals.BundleDir); err == nil {
+		if eng, err := engine.NewWithDevice(globals.BundleDir, serial); err == nil {
 			s := eng.QueryAttachStatus(ctx, picked)
-			// If the device has demonstrably lost the rules for this app,
-			// sync status.json[picked] to that reality so the checkboxes
-			// don't lie before they're rendered.
+			// If the device has demonstrably lost the rules for this app, sync
+			// this device's status to that reality so the checkboxes don't lie
+			// before they're rendered. Scoped to serial, so it can't clobber
+			// another device's state for the same app.
 			if s.Kind == engine.StatusAgentLiveButOff || s.Kind == engine.StatusAgentStale {
-				if err := rules.ClearApp(paths, picked); err == nil {
-					if e, lerr := rules.LoadEffective(paths, picked); lerr == nil {
+				if err := rules.ClearApp(paths, serial, picked); err == nil {
+					if e, lerr := rules.LoadEffective(paths, serial, picked); lerr == nil {
 						eff = e
 					}
 				}
@@ -616,13 +693,21 @@ func runRulesTUI(app string) error {
 		return eff, deviceStatus, nil
 	}
 
-	model := tui.NewRulesAppModel(app, apps, aliasesByApp, loadDeps)
+	model := tui.NewRulesAppModel(tui.RulesAppConfig{
+		Device:       presetDevice,
+		Devices:      deviceChoices,
+		App:          app,
+		Apps:         apps,
+		AliasesByApp: aliasesByApp,
+		LoadApps:     loadApps,
+		LoadDeps:     loadDeps,
+	})
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("tui: %w", err)
 	}
-	picked, updated, dirty, cancelled, loadErr := finalModel.(tui.RulesAppModel).Result()
+	device, picked, updated, dirty, cancelled, loadErr := finalModel.(tui.RulesAppModel).Result()
 	if loadErr != nil {
 		return loadErr
 	}
@@ -634,18 +719,19 @@ func runRulesTUI(app string) error {
 		return nil
 	}
 
-	// Materialize the per-app enabled list from the toggle result and persist.
+	// Materialize the per-app enabled list from the toggle result and persist
+	// it against the chosen device.
 	enabledNames := []string{}
 	for _, r := range updated {
 		if r.Enabled {
 			enabledNames = append(enabledNames, r.Handle)
 		}
 	}
-	if err := rules.SetEnabledForApp(paths, app, enabledNames); err != nil {
+	if err := rules.SetEnabledForApp(paths, device, app, enabledNames); err != nil {
 		return err
 	}
-	// Push the new effective state so device matches the just-saved intent.
-	eng, err := engine.New(globals.BundleDir)
+	// Push the new effective state so the device matches the just-saved intent.
+	eng, err := engine.NewWithDevice(globals.BundleDir, device)
 	if err != nil {
 		return err
 	}
@@ -653,7 +739,7 @@ func runRulesTUI(app string) error {
 		fmt.Fprintf(os.Stderr, "[warn] status saved but push failed: %v\n", err)
 		return err
 	}
-	fmt.Printf("[toggled + synced] %s: %d rule(s) enabled\n", app, len(enabledNames))
+	fmt.Printf("[toggled + synced] %s on %s: %d rule(s) enabled\n", app, device, len(enabledNames))
 	return nil
 }
 

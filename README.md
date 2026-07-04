@@ -41,7 +41,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ## Quick start
 
-Rule definitions and per-app on/off state live in a `.forja/` directory at the root of your project. forja never creates that directory on its own — `forja init` is the one-time setup step.
+Rule definitions and per-device, per-app on/off state live in a `.forja/` directory at the root of your project. forja never creates that directory on its own — `forja init` is the one-time setup step.
 
 ### Basic workflow
 

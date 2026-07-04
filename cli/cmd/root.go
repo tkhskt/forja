@@ -14,6 +14,7 @@ import (
 // constructors that don't need the cobra Command itself.
 type Globals struct {
 	BundleDir string // path to JVMTI agent build outputs (overridable via --bundle)
+	Device    string // target adb device serial (overridable via --device); "" = auto
 }
 
 var globals = Globals{}
@@ -59,6 +60,8 @@ across app process restarts.`,
 		"override agent bundle directory (resolved from FORJA_BUNDLE_DIR, "+
 			"XDG_DATA_HOME/forja/agent, ~/.local/share/forja/agent, "+
 			"/usr/local/share/forja/agent, or ./jvmti-agent/build/outputs/agent)")
+	root.PersistentFlags().StringVar(&globals.Device, "device", "",
+		"target device serial (as shown by 'adb devices'); required only when several devices are connected")
 
 	root.AddCommand(newInitCmd())
 	root.AddCommand(newRulesCmd())

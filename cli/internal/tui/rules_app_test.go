@@ -9,11 +9,15 @@ import (
 	"github.com/tkhskt/forja/internal/config"
 )
 
+// devSerial is the preset device used by tests that exercise the app/rules
+// stages (so the device picker is skipped and the flow starts past it).
+const devSerial = "dev-1"
+
 // loadDepsStub returns a fake LoadDepsFunc. The wrapper calls this in a
 // goroutine via tea.Cmd; in tests we drive the Cmd manually so we just
 // build the corresponding loadDoneMsg ourselves below.
 func loadDepsStub(eff []config.EffectiveRule, ds DeviceStatus, err error) LoadDepsFunc {
-	return func(ctx context.Context, app string) ([]config.EffectiveRule, DeviceStatus, error) {
+	return func(ctx context.Context, serial, app string) ([]config.EffectiveRule, DeviceStatus, error) {
 		return eff, ds, err
 	}
 }
@@ -29,16 +33,20 @@ func runCmd(cmd tea.Cmd) tea.Msg {
 }
 
 // TestRulesAppModelPresetAppSkipsPicker: when constructed with a preset
-// app, the wrapper starts in stageLoadDeps and Init returns the load Cmd.
+// device + app, the wrapper starts in stageLoadDeps and Init returns the load Cmd.
 func TestRulesAppModelPresetAppSkipsPicker(t *testing.T) {
 	eff := []config.EffectiveRule{
 		{Rule: config.Rule{Name: "r1"}, Scope: config.ScopeProject},
 	}
 	ds := DeviceStatus{Message: "live", Live: true}
-	m := NewRulesAppModel("com.example.app", nil, nil, loadDepsStub(eff, ds, nil))
+	m := NewRulesAppModel(RulesAppConfig{
+		Device:   devSerial,
+		App:      "com.example.app",
+		LoadDeps: loadDepsStub(eff, ds, nil),
+	})
 
 	if m.stage != stageLoadDeps {
-		t.Errorf("preset app should start in stageLoadDeps, got %d", m.stage)
+		t.Errorf("preset device+app should start in stageLoadDeps, got %d", m.stage)
 	}
 	cmd := m.Init()
 	msg := runCmd(cmd)
@@ -57,15 +65,19 @@ func TestRulesAppModelPresetAppSkipsPicker(t *testing.T) {
 	}
 }
 
-// TestRulesAppModelPickerSelectionTransitionsToLoad: with no preset app,
-// the wrapper starts in stagePickApp; once the picker emits an enter on a
-// row, the wrapper advances to stageLoadDeps and triggers the load Cmd.
+// TestRulesAppModelPickerSelectionTransitionsToLoad: with a preset device but
+// no preset app, the wrapper starts in stagePickApp; once the picker emits an
+// enter on a row, the wrapper advances to stageLoadDeps and triggers the load.
 func TestRulesAppModelPickerSelectionTransitionsToLoad(t *testing.T) {
 	apps := []string{"com.a", "com.b"}
 	eff := []config.EffectiveRule{{Rule: config.Rule{Name: "x"}}}
-	m := NewRulesAppModel("", apps, nil, loadDepsStub(eff, DeviceStatus{}, nil))
+	m := NewRulesAppModel(RulesAppConfig{
+		Device:   devSerial,
+		Apps:     apps,
+		LoadDeps: loadDepsStub(eff, DeviceStatus{}, nil),
+	})
 	if m.stage != stagePickApp {
-		t.Fatalf("no preset app should start in stagePickApp, got %d", m.stage)
+		t.Fatalf("preset device, no app should start in stagePickApp, got %d", m.stage)
 	}
 
 	// Simulate pressing enter on the first row.
@@ -82,11 +94,15 @@ func TestRulesAppModelPickerSelectionTransitionsToLoad(t *testing.T) {
 	}
 }
 
-// TestRulesAppModelPickerCancelExitsCleanly: cancelling the picker (q/esc)
+// TestRulesAppModelPickerCancelExitsCleanly: cancelling the app picker (q/esc)
 // must surface as cancelled=true in Result(), and the wrapper must produce
 // a tea.Quit on the transition so the program exits cleanly.
 func TestRulesAppModelPickerCancelExitsCleanly(t *testing.T) {
-	m := NewRulesAppModel("", []string{"com.a"}, nil, loadDepsStub(nil, DeviceStatus{}, nil))
+	m := NewRulesAppModel(RulesAppConfig{
+		Device:   devSerial,
+		Apps:     []string{"com.a"},
+		LoadDeps: loadDepsStub(nil, DeviceStatus{}, nil),
+	})
 	updatedI, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	updated := updatedI.(RulesAppModel)
 	if updated.stage != stageDone {
@@ -95,7 +111,7 @@ func TestRulesAppModelPickerCancelExitsCleanly(t *testing.T) {
 	if cmd == nil {
 		t.Error("cancellation should produce tea.Quit Cmd")
 	}
-	_, _, _, cancelled, err := updated.Result()
+	_, _, _, _, cancelled, err := updated.Result()
 	if !cancelled {
 		t.Error("Result.cancelled must be true after picker cancel")
 	}
@@ -104,12 +120,80 @@ func TestRulesAppModelPickerCancelExitsCleanly(t *testing.T) {
 	}
 }
 
+// TestRulesAppModelDeviceCancelExitsCleanly: cancelling at the device picker
+// (multi-device path) surfaces cancelled=true with no device chosen.
+func TestRulesAppModelDeviceCancelExitsCleanly(t *testing.T) {
+	m := NewRulesAppModel(RulesAppConfig{
+		Devices:  []DeviceChoice{{Serial: "a", Label: "A"}, {Serial: "b", Label: "B"}},
+		LoadDeps: loadDepsStub(nil, DeviceStatus{}, nil),
+	})
+	if m.stage != stagePickDevice {
+		t.Fatalf("no preset device should start in stagePickDevice, got %d", m.stage)
+	}
+	updatedI, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := updatedI.(RulesAppModel)
+	if updated.stage != stageDone {
+		t.Errorf("cancelled device picker should advance to stageDone, got %d", updated.stage)
+	}
+	if cmd == nil {
+		t.Error("cancellation should produce tea.Quit Cmd")
+	}
+	device, _, _, _, cancelled, err := updated.Result()
+	if !cancelled || err != nil {
+		t.Errorf("device cancel: want cancelled=true err=nil, got cancelled=%v err=%v", cancelled, err)
+	}
+	if device != "" {
+		t.Errorf("cancelled device pick should report no device, got %q", device)
+	}
+}
+
+// TestRulesAppModelDeviceSelectionLoadsApps: picking a device (with no preset
+// app) advances to stageLoadApps and runs the app-enumeration Cmd, whose result
+// lands the wrapper in stagePickApp.
+func TestRulesAppModelDeviceSelectionLoadsApps(t *testing.T) {
+	loadApps := func(ctx context.Context, serial string) ([]string, map[string][]string, error) {
+		if serial != "b" {
+			t.Errorf("loadApps got serial %q, want the picked one", serial)
+		}
+		return []string{"com.a"}, nil, nil
+	}
+	m := NewRulesAppModel(RulesAppConfig{
+		Devices:  []DeviceChoice{{Serial: "a", Label: "A"}, {Serial: "b", Label: "B"}},
+		LoadApps: loadApps,
+		LoadDeps: loadDepsStub(nil, DeviceStatus{}, nil),
+	})
+	// Move cursor to "b" and select.
+	mI, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = mI.(RulesAppModel)
+	mI, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mI.(RulesAppModel)
+	if m.stage != stageLoadApps {
+		t.Fatalf("after device enter the wrapper should be in stageLoadApps, got %d", m.stage)
+	}
+	if m.device != "b" {
+		t.Errorf("device selection lost: %q", m.device)
+	}
+	msg := runCmd(cmd)
+	if _, ok := msg.(appsLoadedMsg); !ok {
+		t.Fatalf("stageLoadApps Cmd should produce appsLoadedMsg, got %T", msg)
+	}
+	mI, _ = m.Update(msg)
+	m = mI.(RulesAppModel)
+	if m.stage != stagePickApp {
+		t.Errorf("after appsLoadedMsg the wrapper should be in stagePickApp, got %d", m.stage)
+	}
+}
+
 // TestRulesAppModelLoadErrorSurfacesViaResult: when LoadDepsFunc returns an
 // error the wrapper quits and Result reports the error rather than crashing
 // the program or rendering a half-loaded rules view.
 func TestRulesAppModelLoadErrorSurfacesViaResult(t *testing.T) {
 	wantErr := errors.New("load failed")
-	m := NewRulesAppModel("com.example.app", nil, nil, loadDepsStub(nil, DeviceStatus{}, wantErr))
+	m := NewRulesAppModel(RulesAppConfig{
+		Device:   devSerial,
+		App:      "com.example.app",
+		LoadDeps: loadDepsStub(nil, DeviceStatus{}, wantErr),
+	})
 	msg := runCmd(m.Init())
 	updatedI, cmd := m.Update(msg)
 	updated := updatedI.(RulesAppModel)
@@ -119,20 +203,24 @@ func TestRulesAppModelLoadErrorSurfacesViaResult(t *testing.T) {
 	if cmd == nil {
 		t.Error("load error should produce tea.Quit Cmd")
 	}
-	_, _, _, _, gotErr := updated.Result()
+	_, _, _, _, _, gotErr := updated.Result()
 	if !errors.Is(gotErr, wantErr) {
 		t.Errorf("Result.err should be the load error; got %v", gotErr)
 	}
 }
 
 // TestRulesAppModelRulesQuitDirty: after the rules view returns with dirty=
-// true the wrapper's Result must propagate the toggle changes and the
-// dirty flag, so the cmd layer knows to persist + push.
+// true the wrapper's Result must propagate the toggle changes, the dirty flag,
+// and the chosen device, so the cmd layer knows to persist + push.
 func TestRulesAppModelRulesQuitDirty(t *testing.T) {
 	eff := []config.EffectiveRule{
 		{Rule: config.Rule{Name: "r1"}, Scope: config.ScopeProject},
 	}
-	m := NewRulesAppModel("com.example.app", nil, nil, loadDepsStub(eff, DeviceStatus{}, nil))
+	m := NewRulesAppModel(RulesAppConfig{
+		Device:   devSerial,
+		App:      "com.example.app",
+		LoadDeps: loadDepsStub(eff, DeviceStatus{}, nil),
+	})
 	// Drive through load.
 	loadMsg := runCmd(m.Init())
 	mI, _ := m.Update(loadMsg)
@@ -151,9 +239,12 @@ func TestRulesAppModelRulesQuitDirty(t *testing.T) {
 	if cmd == nil {
 		t.Error("rules quit should produce tea.Quit Cmd")
 	}
-	app, out, dirty, cancelled, err := m.Result()
+	device, app, out, dirty, cancelled, err := m.Result()
 	if err != nil || cancelled {
 		t.Errorf("clean quit: want err=nil cancelled=false, got err=%v cancelled=%v", err, cancelled)
+	}
+	if device != devSerial {
+		t.Errorf("device round-trip: %q", device)
 	}
 	if app != "com.example.app" {
 		t.Errorf("app round-trip: %q", app)
@@ -170,7 +261,11 @@ func TestRulesAppModelRulesQuitDirty(t *testing.T) {
 // produce output recognizable as its stage so the user sees a coherent
 // progression (picker → loading → rules).
 func TestRulesAppModelViewSwitchesPerStage(t *testing.T) {
-	m := NewRulesAppModel("", []string{"com.a"}, nil, loadDepsStub(nil, DeviceStatus{}, nil))
+	m := NewRulesAppModel(RulesAppConfig{
+		Device:   devSerial,
+		Apps:     []string{"com.a"},
+		LoadDeps: loadDepsStub(nil, DeviceStatus{}, nil),
+	})
 	if v := m.View(); v == "" {
 		t.Error("picker View should not be empty in stagePickApp")
 	}

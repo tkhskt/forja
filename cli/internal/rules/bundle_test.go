@@ -43,7 +43,7 @@ func TestAddDirWritesBundle(t *testing.T) {
 	if _, err := os.Stat(p.Project); !os.IsNotExist(err) {
 		t.Errorf("root rules.yml must not be created by a --dir add; stat err=%v", err)
 	}
-	eff, err := LoadEffective(p, "com.example.app")
+	eff, err := LoadEffective(p, testSerial, "com.example.app")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestDiscoverMergesRootAndBundles(t *testing.T) {
 	}
 	writeBundleFile(t, filepath.Join(p.forjaDir(), "rules", "pay", "rules.yml"),
 		"rules:\n  - name: bundle-rule\n    response:\n      status: 503\n")
-	eff, err := LoadEffective(p, "com.example.app")
+	eff, err := LoadEffective(p, testSerial, "com.example.app")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestBundleBodyFileResolvesRelativeToBundle(t *testing.T) {
 	writeBundleFile(t, filepath.Join(bundle, "rules.yml"),
 		"rules:\n  - name: bf\n    response:\n      status: 200\n      bodyFile: responses/hoge.json\n")
 	writeBundleFile(t, filepath.Join(bundle, "responses", "hoge.json"), `{"by":"hoge"}`)
-	eff, err := LoadEffective(p, "com.example.app")
+	eff, err := LoadEffective(p, testSerial, "com.example.app")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestDupNamesAcrossBundlesAllowed(t *testing.T) {
 		"rules:\n  - name: dup\n    response:\n      status: 502\n")
 
 	app := "com.example.app"
-	eff, err := LoadEffective(p, app)
+	eff, err := LoadEffective(p, testSerial, app)
 	if err != nil {
 		t.Fatalf("dup names across bundles should be allowed: %v", err)
 	}
@@ -138,10 +138,10 @@ func TestDupNamesAcrossBundlesAllowed(t *testing.T) {
 	}
 
 	// Enable by qualified handle → only that one is on.
-	if err := Enable(p, app, []string{"rules/a/dup"}); err != nil {
+	if err := Enable(p, testSerial, app, []string{"rules/a/dup"}); err != nil {
 		t.Fatalf("enable by handle: %v", err)
 	}
-	eff, _ = LoadEffective(p, app)
+	eff, _ = LoadEffective(p, testSerial, app)
 	for _, e := range eff {
 		want := e.Handle == "rules/a/dup"
 		if e.Enabled != want {
@@ -150,7 +150,7 @@ func TestDupNamesAcrossBundlesAllowed(t *testing.T) {
 	}
 
 	// A bare reference is ambiguous and must error with the candidates.
-	if err := Enable(p, app, []string{"dup"}); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+	if err := Enable(p, testSerial, app, []string{"dup"}); err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Errorf("bare ambiguous name should error; got %v", err)
 	}
 }
@@ -164,7 +164,7 @@ func TestSameBundleProjectLocalSameNameRejected(t *testing.T) {
 		"rules:\n  - name: dup\n    response:\n      status: 1\n")
 	writeBundleFile(t, filepath.Join(dir, "rules.local.yml"),
 		"rules:\n  - name: dup\n    response:\n      status: 2\n")
-	if _, err := LoadEffective(p, "com.example.app"); err == nil || !strings.Contains(err.Error(), "same handle") {
+	if _, err := LoadEffective(p, testSerial, "com.example.app"); err == nil || !strings.Contains(err.Error(), "same handle") {
 		t.Errorf("same-bundle project/local same name should collide; got %v", err)
 	}
 }
@@ -194,8 +194,8 @@ func TestRootRuleLegacyBareStatusStillEnables(t *testing.T) {
 	if err := Add(p, ScopeProject, AddOptions{Name: "legacy", Status: 418}); err != nil {
 		t.Fatal(err)
 	}
-	writeBundleFile(t, p.Status, `{"com.example.app":{"enabled":["legacy"]}}`)
-	eff, err := LoadEffective(p, "com.example.app")
+	writeBundleFile(t, p.Status, `{"test-device":{"com.example.app":{"enabled":["legacy"]}}}`)
+	eff, err := LoadEffective(p, testSerial, "com.example.app")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestUpdateRemoveLocateBundleFile(t *testing.T) {
 	if err := Remove(p, "b", nil); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	eff, err := LoadEffective(p, "com.example.app")
+	eff, err := LoadEffective(p, testSerial, "com.example.app")
 	if err != nil {
 		t.Fatal(err)
 	}

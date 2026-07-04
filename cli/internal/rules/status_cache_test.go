@@ -98,7 +98,7 @@ func TestMigrateLegacyStatusMovesAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy := config.LegacyStatusPath
-	if err := os.WriteFile(legacy, []byte(`{"com.example.app":{"enabled":["r1"]}}`), 0o644); err != nil {
+	if err := os.WriteFile(legacy, []byte(`{"test-device":{"com.example.app":{"enabled":["r1"]}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -114,7 +114,7 @@ func TestMigrateLegacyStatusMovesAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load migrated status: %v", err)
 	}
-	if !st.IsEnabled("com.example.app", "r1") {
+	if !st[testSerial].IsEnabled("com.example.app", "r1") {
 		t.Errorf("migrated status lost its enabled rule: %+v", st)
 	}
 
@@ -123,7 +123,7 @@ func TestMigrateLegacyStatusMovesAndIsIdempotent(t *testing.T) {
 		t.Fatalf("second DefaultPaths: %v", err)
 	}
 	st2, _ := config.LoadStatus(p.Status)
-	if !st2.IsEnabled("com.example.app", "r1") {
+	if !st2[testSerial].IsEnabled("com.example.app", "r1") {
 		t.Errorf("second resolve clobbered the cache: %+v", st2)
 	}
 }
@@ -140,14 +140,14 @@ func TestMigrateSkippedWhenCacheExists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := config.SaveStatus(p.Status, config.Status{"app": {Enabled: []string{"cached"}}}); err != nil {
+	if err := config.SaveStatus(p.Status, config.DeviceStatuses{testSerial: {"app": {Enabled: []string{"cached"}}}}); err != nil {
 		t.Fatal(err)
 	}
 	// Now drop a legacy file that should be ignored.
 	if err := os.MkdirAll(config.DefaultDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(config.LegacyStatusPath, []byte(`{"app":{"enabled":["legacy"]}}`), 0o644); err != nil {
+	if err := os.WriteFile(config.LegacyStatusPath, []byte(`{"test-device":{"app":{"enabled":["legacy"]}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -155,7 +155,7 @@ func TestMigrateSkippedWhenCacheExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	st, _ := config.LoadStatus(p.Status)
-	if st.IsEnabled("app", "legacy") || !st.IsEnabled("app", "cached") {
+	if st[testSerial].IsEnabled("app", "legacy") || !st[testSerial].IsEnabled("app", "cached") {
 		t.Errorf("cache should win over a stale legacy file; got %+v", st)
 	}
 }

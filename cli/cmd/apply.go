@@ -54,25 +54,29 @@ Unknown rule names in --enable cause an error (typo guard). Unknown names in
 				return err
 			}
 			app = resolvedApp
+			serial, err := resolveDevice("")
+			if err != nil {
+				return err
+			}
 			paths, err := rulesPaths()
 			if err != nil {
 				return err
 			}
 			if len(enable) > 0 {
-				if err := rules.Enable(paths, app, enable); err != nil {
+				if err := rules.Enable(paths, serial, app, enable); err != nil {
 					return err
 				}
 			}
 			if len(disable) > 0 {
-				if err := rules.Disable(paths, app, disable); err != nil {
+				if err := rules.Disable(paths, serial, app, disable); err != nil {
 					return err
 				}
 			}
-			eng, err := engine.New(globals.BundleDir)
+			eng, err := engine.NewWithDevice(globals.BundleDir, serial)
 			if err != nil {
 				return err
 			}
-			eff, err := rules.LoadEffective(paths, app)
+			eff, err := rules.LoadEffective(paths, serial, app)
 			if err != nil {
 				return err
 			}
@@ -85,7 +89,7 @@ Unknown rule names in --enable cause an error (typo guard). Unknown names in
 					enabledCount++
 				}
 			}
-			fmt.Printf("[apply] %s: %d rule(s) enabled, pushed to device\n", app, enabledCount)
+			fmt.Printf("[apply] %s on %s: %d rule(s) enabled, pushed to device\n", app, serial, enabledCount)
 			return nil
 		},
 	}

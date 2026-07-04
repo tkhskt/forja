@@ -602,7 +602,10 @@ func Update(paths Paths, name string, scope *Scope, opts UpdateOptions) error {
 // fully-qualified handle. Each token is resolved (full handle, or unique bare
 // name); an unknown name is rejected and an ambiguous bare name errors with
 // the qualified candidates so typos and collisions surface immediately.
-func Enable(paths Paths, app string, names []string) error {
+func Enable(paths Paths, serial, app string, names []string) error {
+	if serial == "" {
+		return errors.New("Enable requires a device serial")
+	}
 	if app == "" {
 		return errors.New("Enable requires a non-empty app")
 	}
@@ -613,10 +616,11 @@ func Enable(paths Paths, app string, names []string) error {
 	if err != nil {
 		return err
 	}
-	st, err := config.LoadStatus(paths.Status)
+	d, err := config.LoadStatus(paths.Status)
 	if err != nil {
 		return err
 	}
+	st := d.ForDevice(serial)
 	for _, n := range names {
 		ref, rerr := resolveToken(refs, n, nil)
 		if rerr != nil {
@@ -624,13 +628,16 @@ func Enable(paths Paths, app string, names []string) error {
 		}
 		st.Enable(app, ref.handle)
 	}
-	return config.SaveStatus(paths.Status, st)
+	return config.SaveStatus(paths.Status, d)
 }
 
 // Disable removes rules from app's enabled list. Tokens are resolved to their
 // handle when possible; an unresolvable token is removed verbatim so stale
 // entries can always be cleaned up (unknown names are NOT rejected).
-func Disable(paths Paths, app string, names []string) error {
+func Disable(paths Paths, serial, app string, names []string) error {
+	if serial == "" {
+		return errors.New("Disable requires a device serial")
+	}
 	if app == "" {
 		return errors.New("Disable requires a non-empty app")
 	}
@@ -638,10 +645,11 @@ func Disable(paths Paths, app string, names []string) error {
 		return nil
 	}
 	refs, _ := index(paths) // best-effort: still clean up even if discovery fails
-	st, err := config.LoadStatus(paths.Status)
+	d, err := config.LoadStatus(paths.Status)
 	if err != nil {
 		return err
 	}
+	st := d.ForDevice(serial)
 	for _, n := range names {
 		key := n
 		if ref, rerr := resolveToken(refs, n, nil); rerr == nil {
@@ -649,60 +657,68 @@ func Disable(paths Paths, app string, names []string) error {
 		}
 		st.Disable(app, key)
 	}
-	return config.SaveStatus(paths.Status, st)
+	return config.SaveStatus(paths.Status, d)
 }
 
-// ClearApp empties app's enabled list (= every rule off for this app) while
-// keeping the app key. Mirrors what `forja off --app X` records locally.
-func ClearApp(paths Paths, app string) error {
+// ClearApp turns every rule off for app on the given device. The now-empty app
+// entry (and the serial, if it has no other apps) is pruned on save. Mirrors
+// what `forja off --app X --device S` records locally.
+func ClearApp(paths Paths, serial, app string) error {
+	if serial == "" {
+		return errors.New("ClearApp requires a device serial")
+	}
 	if app == "" {
 		return errors.New("ClearApp requires a non-empty app")
 	}
-	st, err := config.LoadStatus(paths.Status)
+	d, err := config.LoadStatus(paths.Status)
 	if err != nil {
 		return err
 	}
-	st.ClearApp(app)
-	return config.SaveStatus(paths.Status, st)
+	d.ForDevice(serial).ClearApp(app)
+	return config.SaveStatus(paths.Status, d)
 }
 
 // SetEnabledForApp overwrites app's enabled list with exactly the given
 // names. Used by the TUI on save (when the user toggled rules within an
 // app's view). Unknown rule names are NOT rejected — the caller may
 // legitimately be storing a snapshot.
-func SetEnabledForApp(paths Paths, app string, enabled []string) error {
+func SetEnabledForApp(paths Paths, serial, app string, enabled []string) error {
+	if serial == "" {
+		return errors.New("SetEnabledForApp requires a device serial")
+	}
 	if app == "" {
 		return errors.New("SetEnabledForApp requires a non-empty app")
 	}
-	st, err := config.LoadStatus(paths.Status)
+	d, err := config.LoadStatus(paths.Status)
 	if err != nil {
 		return err
 	}
+	st := d.ForDevice(serial)
 	st.ClearApp(app)
 	for _, n := range enabled {
 		st.Enable(app, n)
 	}
-	return config.SaveStatus(paths.Status, st)
+	return config.SaveStatus(paths.Status, d)
 }
 
-// LoadEffective returns the merged effective rule list for app, ready to
-// push. EffectiveRule.Enabled reflects app's status.json enabled list (keyed
-// by handle; absent = false). discover() rejects handle collisions so the
-// returned list always has unique handles.
-func LoadEffective(paths Paths, app string) ([]config.EffectiveRule, error) {
+// LoadEffective returns the merged effective rule list for app on the given
+// device, ready to push. EffectiveRule.Enabled reflects that device's enabled
+// list for the app (keyed by handle; absent = false). discover() rejects
+// handle collisions so the returned list always has unique handles.
+func LoadEffective(paths Paths, serial, app string) ([]config.EffectiveRule, error) {
 	sources, err := discover(paths)
 	if err != nil {
 		return nil, err
 	}
-	st, err := config.LoadStatus(paths.Status)
+	d, err := config.LoadStatus(paths.Status)
 	if err != nil {
 		return nil, err
 	}
-	return config.EffectiveFromSources(sources, st, app), nil
+	return config.EffectiveFromSources(sources, d[serial], app), nil
 }
 
 // LoadStatus returns the current status (loading from disk). Convenience for
-// callers that want to walk AppsEnabling without re-implementing the io step.
-func LoadStatus(paths Paths) (config.Status, error) {
+// callers that want to walk TargetsEnabling without re-implementing the io step.
+func LoadStatus(paths Paths) (config.DeviceStatuses, error) {
 	return config.LoadStatus(paths.Status)
 }

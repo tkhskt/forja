@@ -10,6 +10,10 @@ import (
 	"github.com/tkhskt/forja/internal/config"
 )
 
+// testSerial is the device serial used across the rules package tests now that
+// status.json is keyed by serial first (serial → per-app Status).
+const testSerial = "test-device"
+
 // pathsIn returns a Paths struct rooted under a fresh tempdir, mirroring the
 // production .forja/ layout. The .forja/ subdirectory is created up front to
 // match the post-`forja init` state — production Save/SaveStatus/SaveAliases
@@ -120,17 +124,17 @@ func TestRemoveDropsAcrossAllPkgStatusEntries(t *testing.T) {
 	p := pathsIn(t)
 	_ = Add(p, ScopeLocal, AddOptions{Name: "tmp"})
 	// Enable on two pkgs.
-	if err := Enable(p, "com.a", []string{"tmp"}); err != nil {
+	if err := Enable(p, testSerial, "com.a", []string{"tmp"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := Enable(p, "com.b", []string{"tmp"}); err != nil {
+	if err := Enable(p, testSerial, "com.b", []string{"tmp"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := Remove(p, "tmp", nil); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
 	st, _ := config.LoadStatus(p.Status)
-	if st.IsEnabled("com.a", "tmp") || st.IsEnabled("com.b", "tmp") {
+	if st[testSerial].IsEnabled("com.a", "tmp") || st[testSerial].IsEnabled("com.b", "tmp") {
 		t.Errorf("status entries for removed rule should be cleaned up: %+v", st)
 	}
 }
@@ -165,11 +169,11 @@ func TestEnableAddsToPkgEnabledList(t *testing.T) {
 	p := pathsIn(t)
 	_ = Add(p, ScopeLocal, AddOptions{Name: "foo"})
 	_ = Add(p, ScopeLocal, AddOptions{Name: "bar"})
-	if err := Enable(p, "com.example.app", []string{"foo", "bar"}); err != nil {
+	if err := Enable(p, testSerial, "com.example.app", []string{"foo", "bar"}); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
 	st, _ := config.LoadStatus(p.Status)
-	if !st.IsEnabled("com.example.app", "foo") || !st.IsEnabled("com.example.app", "bar") {
+	if !st[testSerial].IsEnabled("com.example.app", "foo") || !st[testSerial].IsEnabled("com.example.app", "bar") {
 		t.Errorf("Enable did not record entries: %+v", st)
 	}
 }
@@ -177,13 +181,13 @@ func TestEnableAddsToPkgEnabledList(t *testing.T) {
 func TestEnableRejectsUnknownRuleNames(t *testing.T) {
 	p := pathsIn(t)
 	_ = Add(p, ScopeLocal, AddOptions{Name: "real"})
-	err := Enable(p, "com.example.app", []string{"real", "typo"})
+	err := Enable(p, testSerial, "com.example.app", []string{"real", "typo"})
 	if err == nil {
 		t.Error("expected error for unknown rule 'typo'")
 	}
 	// Real should not have been added either (early reject).
 	st, _ := config.LoadStatus(p.Status)
-	if st.IsEnabled("com.example.app", "real") {
+	if st[testSerial].IsEnabled("com.example.app", "real") {
 		t.Errorf("Enable should be atomic — 'real' should not be set when 'typo' is bogus")
 	}
 }
@@ -191,12 +195,12 @@ func TestEnableRejectsUnknownRuleNames(t *testing.T) {
 func TestDisableRemovesFromPkgEnabledList(t *testing.T) {
 	p := pathsIn(t)
 	_ = Add(p, ScopeLocal, AddOptions{Name: "foo"})
-	_ = Enable(p, "com.example.app", []string{"foo"})
-	if err := Disable(p, "com.example.app", []string{"foo"}); err != nil {
+	_ = Enable(p, testSerial, "com.example.app", []string{"foo"})
+	if err := Disable(p, testSerial, "com.example.app", []string{"foo"}); err != nil {
 		t.Fatalf("Disable: %v", err)
 	}
 	st, _ := config.LoadStatus(p.Status)
-	if st.IsEnabled("com.example.app", "foo") {
+	if st[testSerial].IsEnabled("com.example.app", "foo") {
 		t.Errorf("foo should be disabled: %+v", st)
 	}
 }
@@ -204,7 +208,7 @@ func TestDisableRemovesFromPkgEnabledList(t *testing.T) {
 func TestDisableIgnoresUnknownRuleNames(t *testing.T) {
 	p := pathsIn(t)
 	// No yml entries at all — Disable should silently no-op for typo scrubbing.
-	if err := Disable(p, "com.example.app", []string{"never-existed"}); err != nil {
+	if err := Disable(p, testSerial, "com.example.app", []string{"never-existed"}); err != nil {
 		t.Errorf("Disable of unknown name should not error: %v", err)
 	}
 }
@@ -212,12 +216,12 @@ func TestDisableIgnoresUnknownRuleNames(t *testing.T) {
 func TestClearAppEmptiesEnabledList(t *testing.T) {
 	p := pathsIn(t)
 	_ = Add(p, ScopeLocal, AddOptions{Name: "foo"})
-	_ = Enable(p, "com.example.app", []string{"foo"})
-	if err := ClearApp(p, "com.example.app"); err != nil {
+	_ = Enable(p, testSerial, "com.example.app", []string{"foo"})
+	if err := ClearApp(p, testSerial, "com.example.app"); err != nil {
 		t.Fatalf("ClearApp: %v", err)
 	}
 	st, _ := config.LoadStatus(p.Status)
-	if st.IsEnabled("com.example.app", "foo") {
+	if st[testSerial].IsEnabled("com.example.app", "foo") {
 		t.Errorf("foo should be cleared: %+v", st)
 	}
 }
@@ -227,16 +231,16 @@ func TestSetEnabledForAppOverwrites(t *testing.T) {
 	_ = Add(p, ScopeLocal, AddOptions{Name: "a"})
 	_ = Add(p, ScopeLocal, AddOptions{Name: "b"})
 	_ = Add(p, ScopeLocal, AddOptions{Name: "c"})
-	_ = Enable(p, "com.example.app", []string{"a", "b"})
+	_ = Enable(p, testSerial, "com.example.app", []string{"a", "b"})
 	// Overwrite with a new set — b should go away, c should appear.
-	if err := SetEnabledForApp(p, "com.example.app", []string{"a", "c"}); err != nil {
+	if err := SetEnabledForApp(p, testSerial, "com.example.app", []string{"a", "c"}); err != nil {
 		t.Fatalf("SetEnabledForApp: %v", err)
 	}
 	st, _ := config.LoadStatus(p.Status)
-	if !st.IsEnabled("com.example.app", "a") || !st.IsEnabled("com.example.app", "c") {
+	if !st[testSerial].IsEnabled("com.example.app", "a") || !st[testSerial].IsEnabled("com.example.app", "c") {
 		t.Errorf("a and c should be enabled: %+v", st)
 	}
-	if st.IsEnabled("com.example.app", "b") {
+	if st[testSerial].IsEnabled("com.example.app", "b") {
 		t.Errorf("b should have been removed: %+v", st)
 	}
 }
@@ -248,9 +252,9 @@ func TestLoadEffectiveMergesAndOverridesPerApp(t *testing.T) {
 	_ = Add(p, ScopeLocal, AddOptions{Name: "personal-fast", Status: 418})
 	_ = Add(p, ScopeLocal, AddOptions{Name: "personal", Status: 418})
 	// Enable on com.example.app: personal-fast + personal — leave team rules off.
-	_ = Enable(p, "com.example.app", []string{"personal-fast", "personal"})
+	_ = Enable(p, testSerial, "com.example.app", []string{"personal-fast", "personal"})
 
-	rules, err := LoadEffective(p, "com.example.app")
+	rules, err := LoadEffective(p, testSerial, "com.example.app")
 	if err != nil {
 		t.Fatalf("LoadEffective: %v", err)
 	}
@@ -317,7 +321,7 @@ func TestLoadEffectiveRejectsCrossScopeDuplicates(t *testing.T) {
 	if err := os.WriteFile(p.Local, []byte("rules:\n  - name: "+shared+"\n    response:\n      status: 503\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := LoadEffective(p, "com.example.app")
+	_, err := LoadEffective(p, testSerial, "com.example.app")
 	if err == nil {
 		t.Fatal("LoadEffective should reject cross-scope duplicates")
 	}
@@ -329,14 +333,14 @@ func TestLoadEffectiveRejectsCrossScopeDuplicates(t *testing.T) {
 func TestLoadEffectiveDifferentPkgsHaveDifferentEnabledState(t *testing.T) {
 	p := pathsIn(t)
 	_ = Add(p, ScopeLocal, AddOptions{Name: "shared"})
-	_ = Enable(p, "com.a", []string{"shared"})
+	_ = Enable(p, testSerial, "com.a", []string{"shared"})
 	// com.b has not enabled shared.
 
-	a, _ := LoadEffective(p, "com.a")
+	a, _ := LoadEffective(p, testSerial, "com.a")
 	if len(a) != 1 || !a[0].Enabled {
 		t.Errorf("com.a should have shared enabled: %+v", a)
 	}
-	b, _ := LoadEffective(p, "com.b")
+	b, _ := LoadEffective(p, testSerial, "com.b")
 	if len(b) != 1 || b[0].Enabled {
 		t.Errorf("com.b should have shared disabled (= absent): %+v", b)
 	}
@@ -347,7 +351,7 @@ func TestEffectiveOrderGivesUserPrecedenceOnMatchCollision(t *testing.T) {
 	_ = Add(p, ScopeProject, AddOptions{Name: "team-override", Host: "example.com", Status: 418})
 	_ = Add(p, ScopeLocal, AddOptions{Name: "user-override", Host: "example.com", Status: 999})
 
-	rules, err := LoadEffective(p, "com.example.app")
+	rules, err := LoadEffective(p, testSerial, "com.example.app")
 	if err != nil {
 		t.Fatalf("LoadEffective: %v", err)
 	}
@@ -590,13 +594,13 @@ func TestAddExplicitEmptyBody(t *testing.T) {
 func TestLoadStatusReturnsCurrentState(t *testing.T) {
 	p := pathsIn(t)
 	_ = Add(p, ScopeLocal, AddOptions{Name: "shared"})
-	_ = Enable(p, "com.a", []string{"shared"})
-	_ = Enable(p, "com.b", []string{"shared"})
+	_ = Enable(p, testSerial, "com.a", []string{"shared"})
+	_ = Enable(p, testSerial, "com.b", []string{"shared"})
 	st, err := LoadStatus(p)
 	if err != nil {
 		t.Fatalf("LoadStatus: %v", err)
 	}
-	apps := st.AppsEnabling("shared")
+	apps := st[testSerial].AppsEnabling("shared")
 	want := []string{"com.a", "com.b"}
 	if !reflect.DeepEqual(apps, want) {
 		t.Errorf("AppsEnabling: want %v, got %v", want, apps)
@@ -763,11 +767,11 @@ func TestAddAcceptsMultiByteName(t *testing.T) {
 	}
 	// Enable / Disable round-trip preserves the multi-byte name through
 	// status.json without normalization.
-	if err := Enable(p, "com.example.app", []string{name}); err != nil {
+	if err := Enable(p, testSerial, "com.example.app", []string{name}); err != nil {
 		t.Fatalf("Enable multi-byte name: %v", err)
 	}
 	st, _ := config.LoadStatus(p.Status)
-	if !st.IsEnabled("com.example.app", name) {
+	if !st[testSerial].IsEnabled("com.example.app", name) {
 		t.Errorf("multi-byte name %q should be in com.example.app.s enabled list, got %+v", name, st)
 	}
 }
@@ -780,5 +784,48 @@ func TestAddRejectsCommaName(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), ",") {
 		t.Errorf("error should mention comma, got %v", err)
+	}
+}
+
+// TestEnableIsolatedPerDevice: enabling a rule for an app on one device must
+// not leak into that same app's state on another device — the whole point of
+// serial-keyed status.
+func TestEnableIsolatedPerDevice(t *testing.T) {
+	p := pathsIn(t)
+	_ = Add(p, ScopeLocal, AddOptions{Name: "ra"})
+	_ = Add(p, ScopeLocal, AddOptions{Name: "rb"})
+
+	const app = "com.example.app"
+	if err := Enable(p, "device-A", app, []string{"ra"}); err != nil {
+		t.Fatalf("Enable A: %v", err)
+	}
+	if err := Enable(p, "device-B", app, []string{"rb"}); err != nil {
+		t.Fatalf("Enable B: %v", err)
+	}
+
+	a, _ := LoadEffective(p, "device-A", app)
+	b, _ := LoadEffective(p, "device-B", app)
+	enabled := func(eff []config.EffectiveRule, handle string) bool {
+		for _, r := range eff {
+			if r.Handle == handle {
+				return r.Enabled
+			}
+		}
+		return false
+	}
+	if !enabled(a, "ra") || enabled(a, "rb") {
+		t.Errorf("device-A should have ra on, rb off: %+v", a)
+	}
+	if !enabled(b, "rb") || enabled(b, "ra") {
+		t.Errorf("device-B should have rb on, ra off: %+v", b)
+	}
+
+	// Clearing device-A must not touch device-B.
+	if err := ClearApp(p, "device-A", app); err != nil {
+		t.Fatalf("ClearApp A: %v", err)
+	}
+	b2, _ := LoadEffective(p, "device-B", app)
+	if !enabled(b2, "rb") {
+		t.Errorf("clearing device-A wiped device-B state: %+v", b2)
 	}
 }

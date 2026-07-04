@@ -44,14 +44,38 @@ type Engine struct {
 	ADB    *adb.ADB
 	Cache  *attach.Cache
 	Bundle string // local directory containing libforja-agent-<abi>.so + agent-bundle.dex
+	Serial string // adb device target ("" = default); namespaces the attach cache
 	// Now is injectable to make ShouldReattach tests deterministic. Production
 	// callers can leave it nil and time.Now is used.
 	Now func() time.Time
 }
 
-// New constructs an Engine with the default ADB and cache directory.
-// bundleDir defaults to the first matching path returned by ResolveBundleDir.
+// cacheKey namespaces the per-app attach cache by device. The cache records a
+// pid, and pids are per-device (they can collide across devices), so a single
+// app-keyed record shared between devices could make forja believe device B is
+// attached merely because device A's cached pid happens to match B's. An empty
+// serial keeps the bare app key.
+func (e *Engine) cacheKey(app string) string {
+	if e.Serial == "" {
+		return app
+	}
+	safe := strings.NewReplacer("/", "_", ":", "_").Replace(e.Serial)
+	return safe + "__" + app
+}
+
+// New constructs an Engine targeting the default adb device (correct only when
+// exactly one device is attached). bundleDir defaults to the first matching
+// path returned by ResolveBundleDir.
 func New(bundleDir string) (*Engine, error) {
+	return NewWithDevice(bundleDir, "")
+}
+
+// NewWithDevice constructs an Engine whose adb calls target the given device
+// serial (as shown by `adb devices`). An empty serial behaves like New. This
+// is the seam multi-device support flows through: the caller resolves a serial
+// (from --device, an MCP argument, or a single-device default) and every push
+// / attach / off then addresses that device explicitly.
+func NewWithDevice(bundleDir, serial string) (*Engine, error) {
 	if bundleDir == "" {
 		resolved, err := ResolveBundleDir()
 		if err != nil {
@@ -64,9 +88,10 @@ func New(bundleDir string) (*Engine, error) {
 		return nil, err
 	}
 	return &Engine{
-		ADB:    adb.New(),
+		ADB:    adb.NewWithSerial(serial),
 		Cache:  attach.NewCache(cacheDir),
 		Bundle: bundleDir,
+		Serial: serial,
 	}, nil
 }
 
@@ -131,7 +156,7 @@ func (e *Engine) EnsureAttached(ctx context.Context, app string) error {
 		return fmt.Errorf("%s: %w — launch the app first", app, ErrAppNotRunning)
 	}
 
-	cached, _ := e.Cache.Load(app) // load errors are non-fatal; treat as no cache
+	cached, _ := e.Cache.Load(e.cacheKey(app)) // load errors are non-fatal; treat as no cache
 	decision := attach.ShouldReattach(cached, pid, e.now(), attach.DefaultTTL)
 	if !decision.Reattach {
 		return nil
@@ -140,7 +165,7 @@ func (e *Engine) EnsureAttached(ctx context.Context, app string) error {
 	if err := e.attach(ctx, app); err != nil {
 		return err
 	}
-	if err := e.Cache.Save(app, pid, e.now()); err != nil {
+	if err := e.Cache.Save(e.cacheKey(app), pid, e.now()); err != nil {
 		// Saving cache failure is non-fatal: worst case we re-attach next time.
 		// Surface as a warning, not an error.
 		fmt.Fprintf(os.Stderr, "[warn] could not save attach cache: %v\n", err)
@@ -202,7 +227,7 @@ func (e *Engine) Push(ctx context.Context, app string, rf *config.RulesFile) err
 	}
 	// Record that "push" was the last action so QueryAttachStatus can tell
 	// the TUI that rules are effective (as opposed to being cleared by off).
-	_ = e.Cache.RecordAction(app, attach.ActionPush, e.now())
+	_ = e.Cache.RecordAction(e.cacheKey(app), attach.ActionPush, e.now())
 	return nil
 }
 
@@ -223,7 +248,7 @@ func (e *Engine) PushEffective(ctx context.Context, app string, eff []config.Eff
 	if err := e.ADB.RunAsWrite(ctx, app, RemoteRulesRel, js); err != nil {
 		return err
 	}
-	_ = e.Cache.RecordAction(app, attach.ActionPush, e.now())
+	_ = e.Cache.RecordAction(e.cacheKey(app), attach.ActionPush, e.now())
 	return nil
 }
 
@@ -293,7 +318,7 @@ func (e *Engine) QueryAttachStatus(ctx context.Context, app string) AttachStatus
 	if pid == 0 {
 		return AttachStatus{Kind: StatusAppNotRunning}
 	}
-	cached, _ := e.Cache.Load(app)
+	cached, _ := e.Cache.Load(e.cacheKey(app))
 	if cached == nil {
 		return AttachStatus{Kind: StatusNoAttachRecord, CurrentPid: pid}
 	}
@@ -321,6 +346,6 @@ func (e *Engine) Off(ctx context.Context, app string) error {
 	if err := e.ADB.RunAsWrite(ctx, app, RemoteRulesRel, []byte("[]\n")); err != nil {
 		return err
 	}
-	_ = e.Cache.RecordAction(app, attach.ActionOff, e.now())
+	_ = e.Cache.RecordAction(e.cacheKey(app), attach.ActionOff, e.now())
 	return nil
 }

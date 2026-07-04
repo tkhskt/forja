@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"sort"
 
@@ -43,6 +42,10 @@ enabled use 'forja apply'; to clear an app use 'forja off'.`,
 			if err := requireForjaDir(); err != nil {
 				return err
 			}
+			serial, err := resolveDevice("")
+			if err != nil {
+				return err
+			}
 			paths, err := rulesPaths()
 			if err != nil {
 				return err
@@ -51,6 +54,7 @@ enabled use 'forja apply'; to clear an app use 'forja off'.`,
 			if err != nil {
 				return err
 			}
+			deviceSt := st[serial] // apps with state on the resolved device (may be nil)
 
 			var targets []string
 			if app != "" {
@@ -58,23 +62,23 @@ enabled use 'forja apply'; to clear an app use 'forja off'.`,
 				if err != nil {
 					return err
 				}
-				if _, exists := st[resolved]; !exists {
+				if _, exists := deviceSt[resolved]; !exists {
 					return fmt.Errorf(
-						"no status.json entry for %s — use `forja apply --app %s --enable …` first",
-						resolved, resolved,
+						"no status.json entry for %s on %s — use `forja apply --app %s --enable …` first",
+						resolved, serial, resolved,
 					)
 				}
 				targets = []string{resolved}
 			} else {
-				for k := range st {
+				for k := range deviceSt {
 					targets = append(targets, k)
 				}
 				if len(targets) == 0 {
-					return errors.New("status.json has no entries — nothing to sync (use `forja apply` to seed one)")
+					return fmt.Errorf("no status.json entries for %s — nothing to sync (use `forja apply` to seed one)", serial)
 				}
 				sort.Strings(targets)
 			}
-			return pushToApps(targets, "sync")
+			return pushToApps(serial, targets, "sync")
 		},
 	}
 	c.Flags().StringVar(&app, "app", "", "limit sync to this app (or alias)")

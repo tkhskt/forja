@@ -45,16 +45,42 @@ func (defaultExecutor) RunWithStdin(ctx context.Context, stdin []byte, name stri
 	return stdout.Bytes(), stderr.Bytes(), err
 }
 
-// ADB is a stateless handle. Construct via New or NewWithExecutor.
+// ADB is a handle for talking to one device. Construct via New (default
+// target), NewWithSerial (a specific device), or NewWithExecutor (tests).
+//
+// serial, when non-empty, is passed to every invocation as `-s <serial>` so
+// the call targets that device even when several are connected. An empty
+// serial means "let adb pick" — correct only when exactly one device is
+// attached. Devices() is the exception: it always lists the global device
+// table and ignores serial.
 type ADB struct {
-	exec Executor
+	exec   Executor
+	serial string
 }
 
-// New returns an ADB backed by os/exec.
+// New returns an ADB backed by os/exec with no explicit device target.
 func New() *ADB { return &ADB{exec: defaultExecutor{}} }
+
+// NewWithSerial returns an ADB that targets the given device serial (as shown
+// by `adb devices`). An empty serial behaves like New.
+func NewWithSerial(serial string) *ADB { return &ADB{exec: defaultExecutor{}, serial: serial} }
 
 // NewWithExecutor returns an ADB backed by the given Executor (use for tests).
 func NewWithExecutor(e Executor) *ADB { return &ADB{exec: e} }
+
+// NewWithExecutorSerial returns an ADB backed by the given Executor and
+// targeting a specific serial (use for tests that assert `-s` threading).
+func NewWithExecutorSerial(e Executor, serial string) *ADB { return &ADB{exec: e, serial: serial} }
+
+// args prepends `-s <serial>` to the adb argument list when a device target
+// is set, so every call site can build its args without repeating the serial
+// plumbing. With no serial it returns the args unchanged.
+func (a *ADB) args(rest ...string) []string {
+	if a.serial == "" {
+		return rest
+	}
+	return append([]string{"-s", a.serial}, rest...)
+}
 
 // appIdPattern restricts inputs to valid Android applicationId shapes so we
 // can safely interpolate them into shell strings.
@@ -86,7 +112,7 @@ func (a *ADB) RunAsWrite(ctx context.Context, app, remoteRel string, data []byte
 		remoteRel, remoteRel, remoteRel, remoteRel,
 	)
 	line := fmt.Sprintf("run-as %s sh -c '%s'", app, inner)
-	_, stderr, err := a.exec.RunWithStdin(ctx, data, "adb", "shell", line)
+	_, stderr, err := a.exec.RunWithStdin(ctx, data, "adb", a.args("shell", line)...)
 	if err != nil {
 		return fmt.Errorf("run-as write %s: %s: %w", remoteRel,
 			strings.TrimSpace(string(stderr)), err)
@@ -102,7 +128,7 @@ func (a *ADB) RunAsRead(ctx context.Context, app, remoteRel string) ([]byte, err
 		return nil, err
 	}
 	line := fmt.Sprintf("run-as %s cat %s 2>/dev/null; true", app, remoteRel)
-	stdout, _, err := a.exec.Run(ctx, "adb", "shell", line)
+	stdout, _, err := a.exec.Run(ctx, "adb", a.args("shell", line)...)
 	if err != nil {
 		return nil, fmt.Errorf("run-as read %s: %w", remoteRel, err)
 	}
@@ -118,7 +144,7 @@ func (a *ADB) RunAsRemove(ctx context.Context, app, remoteRel string) error {
 		return err
 	}
 	line := fmt.Sprintf("run-as %s rm -f %s", app, remoteRel)
-	_, stderr, err := a.exec.Run(ctx, "adb", "shell", line)
+	_, stderr, err := a.exec.Run(ctx, "adb", a.args("shell", line)...)
 	if err != nil {
 		return fmt.Errorf("run-as rm: %s: %w",
 			strings.TrimSpace(string(stderr)), err)
@@ -133,7 +159,7 @@ func (a *ADB) Pidof(ctx context.Context, app string) (int, error) {
 	if err := ValidateApp(app); err != nil {
 		return 0, err
 	}
-	stdout, _, err := a.exec.Run(ctx, "adb", "shell", "pidof", app)
+	stdout, _, err := a.exec.Run(ctx, "adb", a.args("shell", "pidof", app)...)
 	if err != nil {
 		// pidof exits non-zero when not found
 		return 0, nil
@@ -152,7 +178,7 @@ func (a *ADB) Pidof(ctx context.Context, app string) (int, error) {
 // PrimaryABI returns ro.product.cpu.abi (e.g. "arm64-v8a"). Used to pick the
 // agent .so to push.
 func (a *ADB) PrimaryABI(ctx context.Context) (string, error) {
-	stdout, _, err := a.exec.Run(ctx, "adb", "shell", "getprop", "ro.product.cpu.abi")
+	stdout, _, err := a.exec.Run(ctx, "adb", a.args("shell", "getprop", "ro.product.cpu.abi")...)
 	if err != nil {
 		return "", fmt.Errorf("getprop: %w", err)
 	}
@@ -193,7 +219,7 @@ const listDebugScript = `cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\0' '\n' | g
 // ListDebuggableApps enumerates running app processes whose applicationId is
 // debuggable (= run-as works against them).
 func (a *ADB) ListDebuggableApps(ctx context.Context) ([]string, error) {
-	stdout, _, _ := a.exec.Run(ctx, "adb", "shell", listDebugScript)
+	stdout, _, _ := a.exec.Run(ctx, "adb", a.args("shell", listDebugScript)...)
 	var apps []string
 	for _, line := range strings.Split(string(stdout), "\n") {
 		line = strings.TrimSpace(line)
@@ -210,6 +236,62 @@ func (a *ADB) ListDebuggableApps(ctx context.Context) ([]string, error) {
 	return apps, nil
 }
 
+// Device is one entry from `adb devices -l`. Model is best-effort (absent for
+// some emulators/older adb) and is display sugar only; Serial is the stable
+// identifier used everywhere else. State is adb's connection state, e.g.
+// "device" (usable), "offline", or "unauthorized".
+type Device struct {
+	Serial string
+	Model  string
+	State  string
+}
+
+// Devices lists the attached devices via `adb devices -l`. It always queries
+// the global device table and ignores this handle's serial target, so it's
+// safe to call on an ADB built with NewWithSerial. The returned slice keeps
+// adb's ordering.
+func (a *ADB) Devices(ctx context.Context) ([]Device, error) {
+	stdout, stderr, err := a.exec.Run(ctx, "adb", "devices", "-l")
+	if err != nil {
+		return nil, fmt.Errorf("adb devices: %s: %w", strings.TrimSpace(string(stderr)), err)
+	}
+	return parseDevices(string(stdout)), nil
+}
+
+// parseDevices turns `adb devices -l` output into Device entries. Split out
+// from Devices so the (fiddly) line format has a pure, unit-testable core.
+//
+// The output looks like:
+//
+//	List of devices attached
+//	emulator-5554          device product:sdk_gphone64_arm64 model:sdk_gphone64_arm64 ...
+//	RZ8N70ABCDE            device usb:... product:... model:Pixel_7 ...
+//	00fabc                 unauthorized
+//
+// The first column is the serial, the second is the state, and the remaining
+// `key:value` tokens carry extras — we lift `model:` when present.
+func parseDevices(out string) []Device {
+	var devices []Device
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "List of devices") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		d := Device{Serial: fields[0], State: fields[1]}
+		for _, tok := range fields[2:] {
+			if m, ok := strings.CutPrefix(tok, "model:"); ok {
+				d.Model = m
+			}
+		}
+		devices = append(devices, d)
+	}
+	return devices
+}
+
 // foregroundActivityRE matches "<app>/<.Activity>" inside dumpsys lines.
 // The pattern is intentionally loose because dumpsys formatting varies by
 // Android version (mResumedActivity / topResumedActivity / etc.).
@@ -219,8 +301,8 @@ var foregroundActivityRE = regexp.MustCompile(`\s([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-z
 // nothing matches (e.g. lock screen, or dumpsys text changed shape).
 // Used to highlight a sensible default in the app picker.
 func (a *ADB) ForegroundApp(ctx context.Context) (string, error) {
-	stdout, _, err := a.exec.Run(ctx, "adb", "shell",
-		"dumpsys activity activities | grep -E 'ResumedActivity' | tail -1")
+	stdout, _, err := a.exec.Run(ctx, "adb", a.args("shell",
+		"dumpsys activity activities | grep -E 'ResumedActivity' | tail -1")...)
 	if err != nil {
 		return "", nil // foreground hint is best-effort
 	}
@@ -241,8 +323,8 @@ func (a *ADB) AttachAgent(ctx context.Context, app, soPath, dexPath string) erro
 		return err
 	}
 	arg := fmt.Sprintf("%s=%s", soPath, dexPath)
-	stdout, stderr, err := a.exec.Run(ctx, "adb", "shell",
-		"cmd", "activity", "attach-agent", app, arg)
+	stdout, stderr, err := a.exec.Run(ctx, "adb", a.args("shell",
+		"cmd", "activity", "attach-agent", app, arg)...)
 	if err != nil {
 		return fmt.Errorf("attach-agent: %s: %w",
 			strings.TrimSpace(string(stderr)), err)
