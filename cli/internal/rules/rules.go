@@ -235,13 +235,14 @@ func (p Paths) pathFor(s Scope) string {
 // device side — so e.g. `Content-Type=text/html` + a string body lets the
 // rule return HTML instead of the default JSON.
 type AddOptions struct {
-	Name     string
-	Host     string
-	Path     string
-	Status   int
-	Body     *config.BodyValue
-	BodyFile string
-	Headers  map[string]string
+	Name        string
+	Description string
+	Host        string
+	Path        string
+	Status      int
+	Body        *config.BodyValue
+	BodyFile    string
+	Headers     map[string]string
 	// Dir, when non-empty, writes the rule into .forja/<Dir>/rules.yml (a
 	// shareable bundle directory, created if absent) instead of the root
 	// .forja/rules.yml. Must stay inside .forja/.
@@ -316,7 +317,8 @@ func Add(paths Paths, scope Scope, opts AddOptions) error {
 	}
 
 	r := config.Rule{
-		Name: opts.Name,
+		Name:        opts.Name,
+		Description: opts.Description,
 		Match: config.Match{
 			Host: opts.Host,
 			Path: opts.Path,
@@ -527,12 +529,13 @@ func Remove(paths Paths, name string, scope *Scope) error {
 //   - &(empty map)  → clear all headers
 //   - &(non-empty)  → replace the entire headers map (no per-key merging)
 type UpdateOptions struct {
-	Host     *string
-	Path     *string
-	Status   *int
-	Body     *config.BodyValue
-	BodyFile *string
-	Headers  *map[string]string
+	Description *string
+	Host        *string
+	Path        *string
+	Status      *int
+	Body        *config.BodyValue
+	BodyFile    *string
+	Headers     *map[string]string
 }
 
 // Update patches an existing rule. If scope is nil, the rule is searched
@@ -564,6 +567,9 @@ func Update(paths Paths, name string, scope *Scope, opts UpdateOptions) error {
 	}
 	if opts.Body != nil && opts.BodyFile != nil {
 		return errors.New("body and bodyFile are mutually exclusive on update")
+	}
+	if opts.Description != nil {
+		r.Description = *opts.Description
 	}
 	if opts.Host != nil {
 		r.Match.Host = *opts.Host

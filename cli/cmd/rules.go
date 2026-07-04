@@ -22,16 +22,20 @@ import (
 
 // rulesFlags is the merged set of CLI flags used by add / update / remove.
 type rulesFlags struct {
-	host     string
-	path     string
-	status   int
-	body     string
-	bodyFile string
-	headers  []string
-	local    bool // --local = target personal scope (.forja/rules.local.yml). default = project (.forja/rules.yml).
+	description string
+	host        string
+	path        string
+	status      int
+	body        string
+	bodyFile    string
+	headers     []string
+	local       bool // --local = target personal scope (.forja/rules.local.yml). default = project (.forja/rules.yml).
 }
 
 func bindRulesFlags(cmd *cobra.Command, f *rulesFlags) {
+	cmd.Flags().StringVar(&f.description, "description", "",
+		"authoring note describing the rule's intent (why it exists). Not pushed to the device; "+
+			"prefer the intent ('simulate login outage') over restating status/path.")
 	cmd.Flags().StringVar(&f.host, "host", "", "match: HTTP host exact match")
 	cmd.Flags().StringVar(&f.path, "path", "", "match: URL encoded path (substring)")
 	cmd.Flags().IntVar(&f.status, "status", 0, "rewrite: HTTP status code")
@@ -222,6 +226,9 @@ func formatRuleLine(r config.EffectiveRule, showEnabled bool) string {
 	sb.WriteString(r.DisplayHandle())
 
 	fields := []string{}
+	if r.Description != "" {
+		fields = append(fields, "desc="+strconv.Quote(r.Description))
+	}
 	if r.Match.Host != "" {
 		fields = append(fields, "host="+r.Match.Host)
 	}
@@ -296,14 +303,15 @@ The newly added rule is NOT applied to any app. To turn it on, run
 				return err
 			}
 			opts := rules.AddOptions{
-				Name:     args[0],
-				Host:     f.host,
-				Path:     f.path,
-				Status:   f.status,
-				Body:     body,
-				BodyFile: f.bodyFile,
-				Headers:  headers,
-				Dir:      dir,
+				Name:        args[0],
+				Description: f.description,
+				Host:        f.host,
+				Path:        f.path,
+				Status:      f.status,
+				Body:        body,
+				BodyFile:    f.bodyFile,
+				Headers:     headers,
+				Dir:         dir,
 			}
 			scope := scopeFrom(&f)
 			paths, err := rulesPaths()
@@ -354,6 +362,10 @@ bare name is ambiguous). --local is accepted for explicitness.
 				return errors.New("--body and --body-file are mutually exclusive")
 			}
 			opts := rules.UpdateOptions{}
+			if cmd.Flags().Changed("description") {
+				description := f.description
+				opts.Description = &description
+			}
 			if cmd.Flags().Changed("host") {
 				host := f.host
 				opts.Host = &host

@@ -103,6 +103,7 @@ Turns off every rewrite on the named app, so the app sees the original (real) re
 | `forja alias set NAME APP_ID [--local]` | Register a short name to use anywhere `--app` is accepted. Defaults to **project** scope (`.forja/aliases.yml`, committed); pass `--local` for the personal file (`.forja/aliases.local.yml`, gitignore it) |
 | `forja alias rm NAME [--local]` | Delete an alias from the target scope (project by default, `--local` for the personal file) |
 | `forja alias list` | List registered aliases, grouped by scope |
+| `forja mcp` | Run forja as an MCP server over stdio so an AI client can drive it (see [MCP server](#mcp-server)) |
 
 Aliases have the **same two scopes as rules**: project (`.forja/aliases.yml`, committed, shared by the team) and local (`.forja/aliases.local.yml`, gitignored, personal). `set` / `rm` default to project; pass `--local` for the personal file. The two are merged when resolving `--app`, with **local entries overriding project** ones of the same name.
 
@@ -122,6 +123,8 @@ forja apply --app com.acme.plugin --enable y          # unknown alias → treate
 CLI flags stay flat; forja distributes them into the yml's `match:` / `response:` groups when it writes the file.
 
 ```
+--description authoring note: the rule's intent (→ description)
+             not pushed to the device; prefer the "why" over restating fields
 --host       match: exact HTTP host           (→ match.host)
 --path       match: substring of encoded path (→ match.path)
              a `*` makes it a glob — each `*` matches one path segment
@@ -288,6 +291,13 @@ So `big-response` above reads `.forja/responses/heavy.json`. Handy when you don'
 
 ### Fields
 
+top-level:
+
+| Field | Purpose |
+|---|---|
+| `name` | Unique handle for the rule (used by `apply`, `update`, `remove`, the TUI) |
+| `description` | Optional authoring note — the rule's intent. **Not** pushed to the device (the interceptor never matches on it); it's there for humans reading the yml and for the MCP layer to match natural-language requests against. Keep it about *why* (`simulate login outage`) rather than restating `status`/`path`. |
+
 `match:`
 
 | Field | Purpose |
@@ -357,3 +367,29 @@ These are the two personal-scope filenames forja recognizes, each with a `**` so
 If you'd rather keep all your personal rules in one place, remember that **any subdirectory is discovered as a bundle** — so you can make, say, a `.forja/local/` directory and gitignore it yourself. forja doesn't treat that path specially; it's just a bundle you choose not to commit, so it's up to you to add it to `.gitignore`.
 
 (`status.json` is **not** listed — it lives in the user cache, outside the repo.)
+
+## MCP server
+
+`forja mcp` runs forja as a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so an AI client (Claude Code/Desktop, etc.) can author rules and drive the device for you in natural language — "mock `/api/login` as a 500 on `com.example.app`", "turn it back off". It's the same non-interactive surface as the CLI (the TUI is not exposed), calling forja's internals directly — no subprocess, no extra runtime.
+
+### Register it
+
+```bash
+claude mcp add forja -- forja mcp
+```
+
+The server resolves `.forja/` from its working directory. Every tool also accepts an optional `project_path` to target a specific project explicitly.
+
+### Tools
+
+| Tool | Maps to |
+|---|---|
+| `forja_rules_list` | `forja rules list` (structured; optional `app` reports per-rule enabled state) |
+| `forja_rule_add` | `forja rules add` (incl. `description`, wildcard `path`) |
+| `forja_rule_update` | `forja rules update` (patch only the fields you pass) |
+| `forja_rule_remove` | `forja rules remove` |
+| `forja_apply` | `forja apply --app … --enable/--disable …` |
+| `forja_off` | `forja off --app …` |
+| `forja_sync` | `forja sync` |
+
+The same constraints as the CLI apply: the target app must be **running** for `forja_apply`/`forja_sync` (the agent attaches to a live process), rewrites are **session-scoped** (gone when the app is killed), and only **debuggable** apps using OkHttp are supported.

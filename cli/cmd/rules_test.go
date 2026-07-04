@@ -51,6 +51,14 @@ func TestParseBodyPlainString(t *testing.T) {
 	}
 }
 
+// TestParseBodyMalformedJSON: a value that opens like a JSON object but
+// doesn't parse is an error, not a silent fallback to a raw string body.
+func TestParseBodyMalformedJSON(t *testing.T) {
+	if _, err := parseBody(`{bad`); err == nil {
+		t.Error("parseBody(`{bad`) should error, not fall back to a raw string")
+	}
+}
+
 func TestParseHeadersHappyPath(t *testing.T) {
 	got, err := parseHeaders([]string{
 		"Content-Type=text/html; charset=utf-8",

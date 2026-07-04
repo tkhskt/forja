@@ -95,7 +95,7 @@ Rules are **session-scoped on the device**: kill the app and the rewrites disapp
 ## Docs
 
 - [`docs/install.md`](docs/install.md) — full install reference (macOS / Linux / Windows / from source) + bundle resolution order
-- [`docs/usage.md`](docs/usage.md) — complete command reference, rule schema (`.forja/rules.yml` + bundles, aliases), recommended `.gitignore`, scope conflict resolution
+- [`docs/usage.md`](docs/usage.md) — complete command reference, rule schema (`.forja/rules.yml` + bundles, aliases), the [MCP server](docs/usage.md#mcp-server) (`forja mcp`) for driving forja from an AI client, recommended `.gitignore`, scope conflict resolution
 - [`docs/internals.md`](docs/internals.md) — how the JVMTI attach + interceptor injection works, troubleshooting, module layout, release procedure, license check
 
 ## License

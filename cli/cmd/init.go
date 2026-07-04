@@ -28,6 +28,7 @@ const initialRulesYml = `# forja rule catalog. Hand-editable.
 #
 # rules:
 #   - name: example-mock
+#     description: why this rule exists  # optional note, not pushed to the device
 #     match:
 #       host: example.com           # exact host match
 #       path: /api/v2/widgets       # substring of encoded path; * = one-segment glob (e.g. /users/*/posts)

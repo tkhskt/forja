@@ -32,10 +32,16 @@ type RulesFile struct {
 // "effective" view (= rules merged with status overrides) for the device JSON
 // payload.
 type Rule struct {
-	Name     string   `yaml:"name"`
-	Enabled  bool     `yaml:"-"`
-	Match    Match    `yaml:"match,omitempty"`
-	Response Response `yaml:"response,omitempty"`
+	Name string `yaml:"name"`
+	// Description is free-form authoring metadata — the rule's intent/why, for
+	// humans reading the yml and for the MCP layer to match natural-language
+	// requests against. It is intentionally NOT emitted to the device JSON
+	// (ruleToDeviceMap ignores it): the on-device interceptor never matches on
+	// it, so keeping it CLI-side keeps the wire payload lean.
+	Description string   `yaml:"description,omitempty"`
+	Enabled     bool     `yaml:"-"`
+	Match       Match    `yaml:"match,omitempty"`
+	Response    Response `yaml:"response,omitempty"`
 }
 
 // Match collects the request-side fields that decide whether a rule fires.

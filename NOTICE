@@ -43,11 +43,14 @@ verified by `go-licenses report ./...`.
 
 Apache License 2.0:
     github.com/containerd/console
+    github.com/modelcontextprotocol/go-sdk
     github.com/spf13/cobra
     gopkg.in/yaml.v3                       (dual MIT / Apache-2.0)
 
 BSD 3-Clause:
     github.com/spf13/pflag
+    github.com/yosida95/uritemplate/v3
+    golang.org/x/oauth2
     golang.org/x/sync
     golang.org/x/sys
     golang.org/x/term
@@ -56,6 +59,7 @@ MIT License:
     github.com/aymanbagabas/go-osc52/v2
     github.com/charmbracelet/bubbletea
     github.com/charmbracelet/lipgloss
+    github.com/google/jsonschema-go
     github.com/lucasb-eyer/go-colorful
     github.com/mattn/go-isatty
     github.com/mattn/go-localereader      (LICENSE not in module cache for v0.0.1; full text in section 6 below)
@@ -65,6 +69,8 @@ MIT License:
     github.com/muesli/reflow
     github.com/muesli/termenv
     github.com/rivo/uniseg
+    github.com/segmentio/asm
+    github.com/segmentio/encoding
 
 ================================================================
 3. Components bundled into agent-bundle.dex (pushed to target devices)

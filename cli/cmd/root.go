@@ -66,6 +66,7 @@ across app process restarts.`,
 	root.AddCommand(newSyncCmd())
 	root.AddCommand(newOffCmd())
 	root.AddCommand(newAliasCmd())
+	root.AddCommand(newMcpCmd())
 	return root
 }
 
