@@ -135,7 +135,11 @@ func (m RulesModel) View() string {
 		return header + "\n" + statusLine + "\n" + empty + "\n\n" + help + "\n"
 	}
 
-	// Render with a section header before the first row of each scope.
+	// Each rule renders as a small block so long names are never truncated and
+	// everything stays legible: the checkbox + handle on the first line, then
+	// (when set) the description, then the match → response rewrite. A section
+	// header precedes the first row of each scope.
+	const detailIndent = "      " // aligns under the handle: 2 (cursor) + 4 ("[x] ")
 	body := ""
 	lastScope := ""
 	for i, r := range m.rules {
@@ -146,26 +150,47 @@ func (m RulesModel) View() string {
 			body += scopeHeader.Render(r.Scope+":") + "\n"
 			lastScope = r.Scope
 		}
+
+		cursor := "  "
+		if i == m.cursor {
+			cursor = "▸ "
+		}
 		mark := "[ ]"
 		if r.Enabled {
 			mark = "[x]"
 		}
+		selected := i == m.cursor
+		stale := !m.device.Live && r.Enabled
+
+		// Line 1: cursor + checkbox + full handle. Highlighted for the cursor
+		// row, dimmed when the rule is enabled but not live on the device.
+		nameLine := fmt.Sprintf("%s%s %s", cursor, mark, r.DisplayHandle())
+		switch {
+		case selected:
+			nameLine = selectedStyle.Render(nameLine)
+		case stale:
+			nameLine = staleRuleStyle.Render(nameLine)
+		}
+		body += nameLine + "\n"
+
+		// Line 2 (optional): the description, dimmed.
+		if r.Description != "" {
+			body += dimStyle.Render(detailIndent+r.Description) + "\n"
+		}
+
+		// Line 3: the rewrite — match on the left, response on the right.
 		host := stringOrStar(r.Match.Host)
 		path := stringOrStar(r.Match.Path)
 		status := "-"
 		if r.Response.Status != 0 {
 			status = fmt.Sprintf("%d", r.Response.Status)
 		}
-		line := fmt.Sprintf("  %s %-30s host=%-24s path=%-20s → %s%s",
-			mark, truncate(r.DisplayHandle(), 30), truncate(host, 24), truncate(path, 20), status,
-			responseExtras(r.Rule))
-		switch {
-		case i == m.cursor:
-			line = selectedStyle.Render(line)
-		case !m.device.Live && r.Enabled:
-			line = staleRuleStyle.Render(line)
+		detail := fmt.Sprintf("host=%s  path=%s  → %s%s", host, path, status, responseExtras(r.Rule))
+		detailStyle := dimStyle
+		if stale {
+			detailStyle = staleRuleStyle
 		}
-		body += line + "\n"
+		body += detailStyle.Render(detailIndent+detail) + "\n"
 	}
 	return header + "\n" + statusLine + "\n" + body + "\n" + help + "\n"
 }
@@ -209,14 +234,4 @@ func stringOrStar(s string) string {
 		return "*"
 	}
 	return s
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	if n <= 1 {
-		return s[:n]
-	}
-	return s[:n-1] + "…"
 }

@@ -123,6 +123,10 @@ func TestInitRequiredBeforeOtherCommands(t *testing.T) {
 // Also exercises `--app` to confirm the [on]/[off] prefix path is wired.
 func TestRulesListSmoke(t *testing.T) {
 	resetForjaState(t, AppDev)
+	// apply (below) attaches to a live process, so the app must be running —
+	// start it here rather than relying on another test having left it up.
+	forceStop(t, AppDev)
+	startMainActivity(t, AppDev)
 
 	// Two rules in different scopes so both sections render.
 	runForja(t, "rules", "add", "project-rule",

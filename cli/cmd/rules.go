@@ -206,7 +206,7 @@ func printRulesList(w io.Writer, eff []config.EffectiveRule, app string) error {
 		first = false
 		fmt.Fprintf(w, "%s:\n", scope)
 		for _, r := range rs {
-			fmt.Fprintf(w, "  %s\n", formatRuleLine(r, showEnabled))
+			printRuleBlock(w, r, showEnabled)
 		}
 	}
 
@@ -216,27 +216,39 @@ func printRulesList(w io.Writer, eff []config.EffectiveRule, app string) error {
 	return nil
 }
 
-// formatRuleLine builds a single-line summary of one rule. The match and
-// response fields are joined with single spaces and only non-zero ones appear,
-// so a rule that only sets a status renders as `name  status=418` rather than
-// padding empty slots.
-func formatRuleLine(r config.EffectiveRule, showEnabled bool) string {
-	var sb strings.Builder
-	if showEnabled {
-		if r.Enabled {
-			sb.WriteString("[on]  ")
-		} else {
-			sb.WriteString("[off] ")
-		}
-	} else {
-		sb.WriteString("- ")
-	}
-	sb.WriteString(r.DisplayHandle())
+// ruleDetailIndent aligns the description / rewrite lines under a rule's name.
+const ruleDetailIndent = "      "
 
-	fields := []string{}
-	if r.Description != "" {
-		fields = append(fields, "desc="+strconv.Quote(r.Description))
+// printRuleBlock renders one rule across up to three lines so long names never
+// get clipped and each part is easy to scan: the enabled marker + handle, then
+// (when set) the description, then the match → response rewrite.
+//
+//	[on]  mock-failure
+//	      simulate a login outage
+//	      host=example.com  path=/login  status=500  body='{"error":"down"}'
+func printRuleBlock(w io.Writer, r config.EffectiveRule, showEnabled bool) {
+	prefix := "- "
+	if showEnabled {
+		prefix = "[off] "
+		if r.Enabled {
+			prefix = "[on]  "
+		}
 	}
+	fmt.Fprintf(w, "  %s%s\n", prefix, r.DisplayHandle())
+	if r.Description != "" {
+		fmt.Fprintf(w, "%s%s\n", ruleDetailIndent, r.Description)
+	}
+	if detail := formatRuleDetail(r); detail != "" {
+		fmt.Fprintf(w, "%s%s\n", ruleDetailIndent, detail)
+	}
+}
+
+// formatRuleDetail builds the single-line match → response summary of a rule.
+// Only non-zero fields appear (so a status-only rewrite renders as just
+// `status=418`), joined with two spaces. The body preview escapes newlines, so
+// the whole detail always stays on one line even for multi-line bodies.
+func formatRuleDetail(r config.EffectiveRule) string {
+	fields := []string{}
 	if r.Match.Host != "" {
 		fields = append(fields, "host="+r.Match.Host)
 	}
@@ -267,12 +279,7 @@ func formatRuleLine(r config.EffectiveRule, showEnabled bool) string {
 	if n := len(r.Response.Headers); n > 0 {
 		fields = append(fields, fmt.Sprintf("headers=%d", n))
 	}
-
-	if len(fields) > 0 {
-		sb.WriteString("  ")
-		sb.WriteString(strings.Join(fields, " "))
-	}
-	return sb.String()
+	return strings.Join(fields, "  ")
 }
 
 func newRulesAddCmd() *cobra.Command {

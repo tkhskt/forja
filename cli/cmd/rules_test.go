@@ -231,10 +231,54 @@ func TestPrintRulesListShowEnabledColumn(t *testing.T) {
 	}
 }
 
-// TestFormatRuleLineFieldRendering: each non-zero field appears, zero fields
+// TestPrintRulesListMultiline: a rule with a description renders across three
+// lines — handle, then description, then the match → response detail — each on
+// its own line so nothing gets crammed together or clipped.
+func TestPrintRulesListMultiline(t *testing.T) {
+	eff := []config.EffectiveRule{
+		{Rule: config.Rule{
+			Name:        "a-very-long-rule-name-that-would-clip",
+			Description: "simulate a login outage",
+			Match:       config.Match{Host: "example.com", Path: "/login"},
+			Response:    config.Response{Status: 500},
+		}, Scope: config.ScopeProject},
+	}
+	var buf bytes.Buffer
+	if err := printRulesList(&buf, eff, ""); err != nil {
+		t.Fatalf("printRulesList: %v", err)
+	}
+	lines := strings.Split(buf.String(), "\n")
+	// Find the handle line, then assert the next two lines are description + detail.
+	handleIdx := -1
+	for i, ln := range lines {
+		if strings.Contains(ln, "a-very-long-rule-name-that-would-clip") {
+			handleIdx = i
+			break
+		}
+	}
+	if handleIdx < 0 {
+		t.Fatalf("handle line missing; got:\n%s", buf.String())
+	}
+	// The full name must survive (no truncation).
+	if strings.Contains(lines[handleIdx], "…") {
+		t.Errorf("handle should not be truncated: %q", lines[handleIdx])
+	}
+	if handleIdx+2 >= len(lines) {
+		t.Fatalf("expected description + detail lines after the handle; got:\n%s", buf.String())
+	}
+	if !strings.Contains(lines[handleIdx+1], "simulate a login outage") {
+		t.Errorf("line after handle should be the description; got %q", lines[handleIdx+1])
+	}
+	detail := lines[handleIdx+2]
+	if !strings.Contains(detail, "host=example.com") || !strings.Contains(detail, "path=/login") || !strings.Contains(detail, "status=500") {
+		t.Errorf("third line should be the match → response detail; got %q", detail)
+	}
+}
+
+// TestFormatRuleDetailFieldRendering: each non-zero field appears, zero fields
 // stay hidden, and body presentation shows the actual content (truncated)
 // rather than an opaque length so users can spot the right rule visually.
-func TestFormatRuleLineFieldRendering(t *testing.T) {
+func TestFormatRuleDetailFieldRendering(t *testing.T) {
 	cases := []struct {
 		name    string
 		rule    config.EffectiveRule
@@ -246,7 +290,7 @@ func TestFormatRuleLineFieldRendering(t *testing.T) {
 			rule: config.EffectiveRule{
 				Rule: config.Rule{Name: "x", Match: config.Match{Host: "example.com"}},
 			},
-			want:    []string{"x", "host=example.com"},
+			want:    []string{"host=example.com"},
 			notWant: []string{"path=", "status=", "body="},
 		},
 		{
@@ -309,7 +353,7 @@ func TestFormatRuleLineFieldRendering(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := formatRuleLine(tc.rule, false)
+			got := formatRuleDetail(tc.rule)
 			for _, s := range tc.want {
 				if !strings.Contains(got, s) {
 					t.Errorf("want %q in output, got: %s", s, got)
