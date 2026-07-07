@@ -299,3 +299,31 @@ func TestMCPToolErrorSurface(t *testing.T) {
 		t.Errorf("expected IsError result for missing .forja/, got: %+v", res.Content)
 	}
 }
+
+// TestMCPAddBundle verifies the Dir argument routes a rule into a shareable
+// bundle (.forja/<dir>/rules.yml) and that it surfaces under the <dir>/<name>
+// handle — the "make it a bundle / shareable set" path an AI client drives.
+func TestMCPAddBundle(t *testing.T) {
+	tmp := tempProject(t)
+	mustAdd(t, tmp, AddInput{
+		Name: "declined", Host: "127.0.0.1", Path: "/pay", Status: 402, Dir: "payments",
+	})
+
+	if _, err := os.Stat(filepath.Join(tmp, ".forja", "payments", "rules.yml")); err != nil {
+		t.Errorf("expected .forja/payments/rules.yml to be written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".forja", "rules.yml")); err == nil {
+		t.Errorf("root rules.yml should not be created for a bundle add")
+	}
+
+	rules := listRules(t, tmp)
+	if len(rules) != 1 {
+		t.Fatalf("want 1 rule, got %d", len(rules))
+	}
+	if rules[0].Handle != "payments/declined" {
+		t.Errorf("bundle handle = %q, want payments/declined", rules[0].Handle)
+	}
+	if rules[0].Scope != "project" {
+		t.Errorf("bundle rule should default to project scope, got %q", rules[0].Scope)
+	}
+}

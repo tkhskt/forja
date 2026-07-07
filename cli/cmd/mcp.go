@@ -102,7 +102,7 @@ func registerTools(s *mcp.Server) {
 	}, listHandler)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "forja_rule_add",
-		Description: "Add a rewrite rule to the catalog (.forja/rules.yml). Does not push to any device.",
+		Description: "Add a rewrite rule to the catalog. Writes the root .forja/rules.yml by default; pass `dir` to group it into a shareable bundle (.forja/<dir>/rules.yml), or `local` for the personal file. Does not push to any device.",
 	}, addHandler)
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "forja_rule_update",
@@ -206,6 +206,7 @@ type AddInput struct {
 	Body        string            `json:"body,omitempty" jsonschema:"rewrite: inline response body. A JSON-object string is sent structured; anything else is sent raw."`
 	Headers     map[string]string `json:"headers,omitempty" jsonschema:"rewrite: response header overrides"`
 	Local       bool              `json:"local,omitempty" jsonschema:"write to the local scope (.forja/rules.local.yml) instead of the shared project catalog"`
+	Dir         string            `json:"dir,omitempty" jsonschema:"bundle directory under .forja/ (e.g. 'payments' or 'auth/checkout') to group this rule into a self-contained, shareable bundle at .forja/<dir>/rules.yml instead of the root catalog. Set this when the user asks to make the rule as a bundle, group it with related rules, or produce a reusable/shareable set — pick a short kebab-case name from the rule's domain if the user didn't name one. The rule's handle becomes <dir>/<name>. Composes with local."`
 }
 
 func addHandler(_ context.Context, _ *mcp.CallToolRequest, in AddInput) (*mcp.CallToolResult, any, error) {
@@ -221,6 +222,7 @@ func addHandler(_ context.Context, _ *mcp.CallToolRequest, in AddInput) (*mcp.Ca
 			Path:        in.Path,
 			Status:      in.Status,
 			Headers:     in.Headers,
+			Dir:         in.Dir,
 		}
 		if in.Body != "" {
 			body, err := parseBody(in.Body)
@@ -240,7 +242,11 @@ func addHandler(_ context.Context, _ *mcp.CallToolRequest, in AddInput) (*mcp.Ca
 		if err := rules.Add(paths, scope, opts); err != nil {
 			return err
 		}
-		msg = fmt.Sprintf("added rule %q to %s scope", in.Name, scope.String())
+		if in.Dir != "" {
+			msg = fmt.Sprintf("added rule %q to %s bundle (%s scope)", in.Name, in.Dir, scope.String())
+		} else {
+			msg = fmt.Sprintf("added rule %q to %s scope", in.Name, scope.String())
+		}
 		return nil
 	})
 	if err != nil {

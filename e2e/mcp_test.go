@@ -13,7 +13,9 @@ package e2e_test
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -131,4 +133,40 @@ appId: com.tkhskt.forja.sample
 	// Back to baseline: tapping now returns 200 (no rewrite).
 	clearLogcat(t)
 	maestroFlow(t, "tap_singleton_assert_200.yaml")
+}
+
+// TestMCPAddBundleE2E drives the real `forja mcp` server over stdio to create a
+// rule in a shareable bundle, then confirms the bundle file lands on disk and
+// the rule surfaces under its <dir>/<name> handle. Device-independent (rule
+// authoring never touches adb), so it runs against an isolated temp project via
+// project_path and doesn't need the app running.
+func TestMCPAddBundleE2E(t *testing.T) {
+	proj := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(proj, ".forja"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cs, ctx := forjaMCPSession(t)
+
+	mcpCall(t, cs, ctx, "forja_rule_add", map[string]any{
+		"project_path": proj,
+		"name":         "declined",
+		"host":         "127.0.0.1",
+		"path":         "/pay",
+		"status":       402,
+		"dir":          "payments",
+	})
+
+	// The bundle file must exist on disk; the root catalog must not be created.
+	if _, err := os.Stat(filepath.Join(proj, ".forja", "payments", "rules.yml")); err != nil {
+		t.Errorf("expected .forja/payments/rules.yml on disk: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(proj, ".forja", "rules.yml")); err == nil {
+		t.Errorf("root rules.yml should not exist for a bundle add")
+	}
+
+	// And the rule is listed under its bundle-qualified handle.
+	out := mcpCall(t, cs, ctx, "forja_rules_list", map[string]any{"project_path": proj})
+	if !strings.Contains(out, "payments/declined") {
+		t.Errorf("rules_list should show the bundle handle payments/declined; got:\n%s", out)
+	}
 }

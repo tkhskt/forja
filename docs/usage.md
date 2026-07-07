@@ -413,7 +413,7 @@ The device-facing tools (`forja_apply`, `forja_off`, `forja_sync`, and `forja_ru
 | Tool | Maps to |
 |---|---|
 | `forja_rules_list` | `forja rules list` (structured; optional `app` reports per-rule enabled state) |
-| `forja_rule_add` | `forja rules add` (incl. `description`, wildcard `path`) |
+| `forja_rule_add` | `forja rules add` (incl. `description`, wildcard `path`; pass `dir` to write into a shareable bundle, `local` for the personal file) |
 | `forja_rule_update` | `forja rules update` (patch only the fields you pass) |
 | `forja_rule_remove` | `forja rules remove` |
 | `forja_apply` | `forja apply --app … --enable/--disable …` |
